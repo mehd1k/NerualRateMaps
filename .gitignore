@@ -1,0 +1,9 @@
+# Ignore data folders
+cells_kernels/
+cells_kernels_images/
+lipt_test_line/
+lipt_test_orientation/
+old/
+outputs/
+outputs2/
+test/
