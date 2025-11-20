@@ -1,0 +1,81 @@
+# Gazebo Neural Analysis Configuration
+
+## Overview
+This configuration file contains parameters for the Gazebo Neural Analysis Node, which integrates Gazebo camera data with MATLAB neural analysis pipeline.
+
+## Camera Configuration
+```yaml
+camera:
+  topic: "/my_camera/image_raw"  # Gazebo camera topic
+  width: 150                     # Target image width (matching original Panda3D)
+  height: 90                     # Target image height (matching original Panda3D)
+  encoding: "passthrough"        # Image encoding
+```
+
+## Processing Parameters
+```yaml
+processing:
+  num_steps: 150                 # Number of processing steps
+  rate: 10.0                     # Processing rate in Hz
+  dt: 0.01                       # Time step for control
+  debug_save_interval: 10        # Save debug images every N steps
+```
+
+## Robot Initial State
+```yaml
+robot:
+  initial_position:
+    x: 0.4                       # Initial X position
+    y: 0.25                      # Initial Y position
+  initial_heading: 0.0           # Initial heading direction (degrees)
+```
+
+## Control Parameters
+```yaml
+control:
+  speed: 3.0                     # Control speed scaling
+  heading_update_rate: 0.8       # Heading update smoothing factor
+  max_heading_change: 18.0      # Maximum heading change per step (degrees)
+```
+
+## MATLAB Configuration
+```yaml
+matlab:
+  engine_timeout: 30.0           # MATLAB engine timeout (seconds)
+  function_name: "generate_V1_RSC_model_response"  # MATLAB function to call
+  neural_units: 100             # Number of neural units
+```
+
+## Output Configuration
+```yaml
+output:
+  directory: "./output"          # Output directory
+  save_intermediate: true        # Save intermediate results
+  create_plots: true             # Create trajectory plots
+  debug_images: true             # Save debug images
+```
+
+## Cell Configuration
+```yaml
+cells:
+  directory: "cells_controllers"  # Directory containing cell control gains
+  interpolation: true            # Enable orientation interpolation
+```
+
+## Topics
+```yaml
+topics:
+  input:
+    camera: "/my_camera/image_raw"    # Input camera topic
+  output:
+    cmd_vel: "/cmd_vel"               # Output velocity commands
+    pose: "/robot_pose"              # Output robot pose
+```
+
+## Coordinate Frames
+```yaml
+frames:
+  map: "map"                     # Map frame
+  odom: "odom"                   # Odometry frame
+  base_link: "base_link"         # Robot base frame
+```
