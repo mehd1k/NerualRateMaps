@@ -48,8 +48,8 @@ def create_triangle(x, y, angle, size=0.02):
 
 
 def visualization(bars):
-        traj = np.load('trj/postion_ls.npy')
-        hd_ls = np.load('trj/hd_ls.npy')*np.pi/180
+        traj = np.load('trj/postion_ls_final.npy')
+        hd_ls = np.load('trj/hd_ls_final.npy')*np.pi/180
         
 
 

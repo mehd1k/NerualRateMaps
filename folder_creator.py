@@ -12,7 +12,7 @@ base_directory = 'cells_kernels'
 #         os.makedirs(folder_path)
         
 ####Define the base directory where you want to create the folders
-base_directory_ls = ['neuralrate_maps','cells_controllers', 'cells_kernels_images', 'cells_kernels', 'lipt_test_line' ]
+base_directory_ls = ['neuralrate_maps','cells_controllers', 'cells_controllers_vae', 'cells_controllers_neural_lidar', 'cells_kernels_images', 'cells_kernels', 'lipt_test_line' ]
 
 for j in range(0,48):
     for bd in base_directory_ls:
@@ -24,8 +24,6 @@ for j in range(0,48):
         for i in range(0, 360, 10):
             folder_name = f"deg{i}"
             folder_path = os.path.join(base_directory, folder_name)
-            
-            # Create the folder if it doesn't exist
             if not os.path.exists(folder_path):
                 os.makedirs(folder_path)
                 print(f"Created folder: {folder_path}")

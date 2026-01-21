@@ -8,7 +8,6 @@ Integrates Gazebo camera data with MATLAB neural analysis pipeline
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data, ReliabilityPolicy
 from sensor_msgs.msg import Image, LaserScan
 from geometry_msgs.msg import PoseStamped, Twist
 from cv_bridge import CvBridge
@@ -17,7 +16,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 import sys
-import time
 # import matlab.engine
 from gen_controller import cell_ls
 from find_controller_orientation import control_gain_load
@@ -37,13 +35,18 @@ from gen_controller import vectorize_matrix, load_RSC_data
 from plot_vector_field_from_lidar import generate_occupancy_grid_scan
 import time
 # Import torch for VAE model loading
+
+
+import torch
+import torch.nn as nn
+
+# Define TORCH_AVAILABLE for compatibility
 try:
     import torch
-    import torch.nn as nn
     TORCH_AVAILABLE = True
 except ImportError:
     TORCH_AVAILABLE = False
-    print("Warning: PyTorch not available. VAE functionality will be disabled.")
+
 
 def compress_highlights(img_bgr):
     # img_bgr in [0,1] float32 preferred
@@ -214,7 +217,7 @@ class GazeboNeuralAnalysisNode(Node):
         self.sc_img = 1
         self.cam_far = int(3000/self.sc_img)
         
-        self.measurement_mode = 'vae'
+        self.measurement_mode = 'neural_lidar'
         # Initialize control system components
         self.cell_ls = cell_ls
         self.control_gain_load = control_gain_load(self.measurement_mode)
@@ -228,8 +231,7 @@ class GazeboNeuralAnalysisNode(Node):
         self.heading_list = [float(h) for h in heading_list]
         self.current_cell_id = None
         self.current_grid_occ = None
-        time.sleep(2)
-        self.get_logger().info("Waiting for 2 seconds to start the node")
+        
         # Robot state
         self.current_position = np.array([0.22, 0.7])  # Initial position
         self.current_hd = 270  #Initial heading direction
@@ -261,15 +263,7 @@ class GazeboNeuralAnalysisNode(Node):
         
         # Create subscribers
         self.image_sub = Subscriber(self, Image, '/my_camera/image_raw')
-        # Use sensor data QoS for lidar (best effort, small queue for real-time data)
-        scan_qos = qos_profile_sensor_data
-        self.scan_sub = self.create_subscription(
-            LaserScan, 
-            '/scan', 
-            self.scan_callback, 
-            scan_qos
-        )
-        self.get_logger().info("Subscribed to /scan topic for lidar data with sensor QoS profile")
+        self.scan_sub = self.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
         
         # Create synchronizer for image and pose data
         self.ts = ApproximateTimeSynchronizer([self.image_sub], queue_size=10, slop=0.1)
@@ -289,34 +283,35 @@ class GazeboNeuralAnalysisNode(Node):
 
 
     
-        if self.measurement_mode == 'vae':
-            # Load VAE model for lidar scan processing
-            # Try multiple possible paths to find the model file
-            # This is important because ROS2 nodes may run from different working directories
-            # possible_paths = [
-            #     'lidar_vae_model.pth',  # Relative to current working directory
-            #     os.path.join(os.path.dirname(__file__), 'lidar_vae_model.pth'),  # Relative to script location
-            #     os.path.expanduser('~/NerualRateMaps/lidar_vae_model.pth'),  # Absolute home path
-            #     '/home/mehdi/NerualRateMaps/lidar_vae_model.pth'  # Hardcoded absolute path as fallback
-            # ]
-            
-            # vae_model_path = None
-            # for path in possible_paths:
-            #     abs_path = os.path.abspath(path)
-            #     if os.path.exists(abs_path):
-            #         file_size = os.path.getsize(abs_path)
-            #         if file_size > 1000:  # Valid file size
-            #             vae_model_path = abs_path
-            #             self.get_logger().info(f"Found VAE model at: {vae_model_path}")
-            #             break
-            
+        # Load VAE model for lidar scan processing
+        # Try multiple possible paths to find the model file
+        # This is important because ROS2 nodes may run from different working directories
+        possible_paths = [
+            'lidar_vae_model.pth',  # Relative to current working directory
+            os.path.join(os.path.dirname(__file__), 'lidar_vae_model.pth'),  # Relative to script location
+            os.path.expanduser('~/NerualRateMaps/lidar_vae_model.pth'),  # Absolute home path
+            '/home/mehdi/NerualRateMaps/lidar_vae_model.pth'  # Hardcoded absolute path as fallback
+        ]
         
-            self.VAE, self.vae_data_min, self.vae_data_max = load_vae_model(
-                device='cpu'  # Use CPU by default, change to 'cuda' if GPU available
-            )
-            self.vae_device = 'cpu'
-                    
-    
+        vae_model_path = None
+        for path in possible_paths:
+            abs_path = os.path.abspath(path)
+            if os.path.exists(abs_path):
+                file_size = os.path.getsize(abs_path)
+                if file_size > 1000:  # Valid file size
+                    vae_model_path = abs_path
+                    self.get_logger().info(f"Found VAE model at: {vae_model_path}")
+                    break
+        
+            
+
+        self.VAE, self.vae_data_min, self.vae_data_max = load_vae_model(
+            model_path=vae_model_path,
+            device='cpu'  # Use CPU by default, change to 'cuda' if GPU available
+        )
+        self.vae_device = next(self.VAE.parameters()).device
+        self.get_logger().info(f"VAE model loaded successfully from {vae_model_path}")
+                
         self.mode = mode
         if mode == 'controller':
             self.timer = self.create_timer(self.timer_period, self.process_callback)
@@ -350,62 +345,18 @@ class GazeboNeuralAnalysisNode(Node):
         ##test
         # self.vector_field_collected_data(9, 270)
         # sys.exit()
-        if self.measurement_mode == 'neural_rate':
-            # Initialize MATLAB engine
-            self.get_logger().info("Starting MATLAB engine...")
-            try:
-                self.eng = matlab.engine.start_matlab()
-                self.get_logger().info("MATLAB engine started successfully")
-            except Exception as e:
-                self.get_logger().error(f"Failed to start MATLAB engine: {e}")
-                sys.exit(1)
-            
+
+        # Initialize MATLAB engine
+        # self.get_logger().info("Starting MATLAB engine...")
+        # try:
+        #     self.eng = matlab.engine.start_matlab()
+        #     self.get_logger().info("MATLAB engine started successfully")
+        # except Exception as e:
+        #     self.get_logger().error(f"Failed to start MATLAB engine: {e}")
+        #     sys.exit(1)
+        
         
         self.get_logger().info("Gazebo Neural Analysis Node initialized successfully")
-        
-        # Check if scan topic is available (async check after a short delay, run once)
-        self.scan_check_done = False
-        self.create_timer(1.0, self.check_scan_topic)
-    
-    def check_scan_topic(self):
-        """Check if scan topic is available and logging"""
-        if self.scan_check_done:
-            return
-        self.scan_check_done = True
-        
-        try:
-            # Get topic info
-            topics = self.get_topic_names_and_types()
-            scan_topics = [name for name, types in topics if 'scan' in name.lower()]
-            
-            if scan_topics:
-                self.get_logger().info(f"Found scan-related topics: {scan_topics}")
-            else:
-                self.get_logger().warn(f"WARNING: No scan topics found! Available topics: {[name for name, _ in topics[:10]]}")
-            
-            # Check if /scan specifically exists
-            topic_names = [name for name, _ in topics]
-            if '/scan' in topic_names:
-                self.get_logger().info("✓ /scan topic is available")
-                # Try to get topic info
-                try:
-                    publisher_count = len(self.get_publishers_info_by_topic('/scan'))
-                    subscriber_count = len(self.get_subscriptions_info_by_topic('/scan'))
-                    self.get_logger().info(f"  Publishers: {publisher_count}, Subscribers: {subscriber_count}")
-                    
-                    # Verify our subscription
-                    sub_info = self.get_subscriptions_info_by_topic('/scan')
-                    if sub_info:
-                        self.get_logger().info(f"  Our subscription: {sub_info[0].topic_name}, QoS: {sub_info[0].qos_profile}")
-                    else:
-                        self.get_logger().warn("  WARNING: Could not find our subscription to /scan!")
-                except Exception as e:
-                    self.get_logger().error(f"  Error getting topic info: {e}")
-            else:
-                self.get_logger().error("✗ /scan topic NOT found! Check your Gazebo model configuration.")
-                
-        except Exception as e:
-            self.get_logger().error(f"Error checking scan topic: {e}")
     
     def create_output_directories(self):
         """Create necessary output directories"""
@@ -445,7 +396,6 @@ class GazeboNeuralAnalysisNode(Node):
     
     def scan_callback(self, scan_msg):
         """Callback for lidar scan data"""
-        # self.get_logger().info(f"[SCAN] Callback triggered! Received scan message with {len(scan_msg.ranges)} ranges")
         try:
             # Store the scan data
             self.current_scan = {
@@ -459,10 +409,10 @@ class GazeboNeuralAnalysisNode(Node):
                 "range_min": float(scan_msg.range_min),
                 "range_max": float(scan_msg.range_max)
             }
-            # self.current_grid_occ = generate_occupancy_grid_polar(self.current_scan)[0]
-            # self.get_logger().info(f"[SCAN] Stored lidar scan: {len(scan_msg.ranges)} points, range: [{scan_msg.range_min:.2f}, {scan_msg.range_max:.2f}], angles: [{scan_msg.angle_min:.2f}, {scan_msg.angle_max:.2f}]")
+            self.current_grid_occ = generate_occupancy_grid_polar(self.current_scan)[0]
+            self.get_logger().debug(f"Received lidar scan with {len(scan_msg.ranges)} points")
         except Exception as e:
-            self.get_logger().error(f"[SCAN] Error processing scan: {e}", exc_info=True)
+            self.get_logger().error(f"Error processing scan: {e}")
     
     def process_image(self, cv_image):
         """
@@ -581,18 +531,6 @@ class GazeboNeuralAnalysisNode(Node):
                 # self.get_logger().info('measurement shape', measurement.shape)
                 # self.get_logger().info('controller shape', K.shape)
                 u = K[0]@measurement+Kb
-            elif self.measurement_mode == 'vae':
-                if self.current_scan is None:
-                    self.get_logger().warn("No lidar scan data available yet, using zero measurement")
-                    # Get latent dim from VAE model if available, otherwise default to 32
-                    latent_dim = getattr(self.VAE, 'latent_dim', 32) if self.VAE else 32
-                    measurement = np.zeros((latent_dim, 1))  # Match expected shape for matrix multiplication
-                else:
-                    measurement = self.encode_lidar_with_vae(self.current_scan['ranges'])
-                    # Ensure measurement is column vector
-                    if len(measurement.shape) == 1:
-                        measurement = measurement.reshape(-1, 1)
-                u = K@measurement+Kb
             else:
                 raise ValueError(f"Invalid measurement mode: {self.measurement_mode}")
             # if current_cell == 9:
@@ -651,7 +589,6 @@ class GazeboNeuralAnalysisNode(Node):
         lidar_normalized = (lidar_ranges - data_min) / (data_max - data_min + 1e-8)
         
         # Convert to torch tensor with float32 dtype and move to device
-        
         lidar_tensor = torch.from_numpy(lidar_normalized).float().to(self.vae_device)
         
         # Encode to latent space
@@ -736,7 +673,7 @@ class GazeboNeuralAnalysisNode(Node):
             self.publisher_pose.publish(msg)
             
             self.get_logger().debug('Publishing joint trajectory')
-            # time.sleep(0.5)
+            time.sleep(0.5)
             
         except Exception as e:
             self.get_logger().error(f"Error publishing pose: {e}")
@@ -1200,7 +1137,7 @@ def main(args=None):
     parser.add_argument(
         '--mode',
         choices=['controller', 'gen_data', 'vector_feild'],
-        default='gen_data',
+        default='controller',
         help="Operating mode for the node"
     )
     parser.add_argument(
@@ -1208,15 +1145,15 @@ def main(args=None):
         type=int,
         nargs='+',
         # default=list(range(0,48)),
-        default=[22,30,34,38,42],
+        default=[30],
         help="Cell IDs to include when generating data"
     )
     parser.add_argument(
         '--headings',
         type=float,
         nargs='+',
-        default=list(range(0, 360, 10)),
-        # default=[0],
+        # default=list(range(0, 360, 10)),
+        default=[40],
         help="Heading angles (degrees) to iterate when generating data"
     )
     parsed_args, remaining = parser.parse_known_args(args=args)

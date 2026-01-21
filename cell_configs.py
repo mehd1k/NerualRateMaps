@@ -464,7 +464,16 @@ exit_Vertices=[np.array([1.05, 0.15]), np.array([1.05, 0.0])],
 vrt=[np.array([1.05, 0.0]), np.array([1.20, 0.0]), np.array([1.20, 0.15]), np.array([1.05, 0.15])])
 
 
+c_test = cell(
+    Barrier=[
+        [np.array([0.15, 1.05]), np.array([0.45, 1.05])],
+        [np.array([0.45, 1.05]), np.array([0.45-delta_x, 0.75])],
+        [np.array([0.15, 1.05]), np.array([0.15+delta_x, 0.75])]
+        ],
+    exit_Vertices=[np.array([0.15, 0.75]), np.array([0.45, 0.75])],
+    vrt=[np.array([0.15, 1.05]), np.array([0.45, 1.05]), np.array([0.45, 0.75]), np.array([0.15, 0.75])])
+
 
 cell_ls = [c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20, c21, c22, c23, c24, c25, c26, c27, c28, c29, c30, c31,
-             c32, c33, c34, c35, c36, c37, c38, c39, c40, c41, c42, c43, c44, c45, c46, c47 ]
+             c32, c33, c34, c35, c36, c37, c38, c39, c40, c41, c42, c43, c44, c45, c46, c47, c_test ]
 

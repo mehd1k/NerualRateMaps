@@ -11,8 +11,19 @@ from gurobipy import GRB
 import sys
 import scipy.io as sio
 import os
-
+from visualize_lidar_scan import generate_occupancy_grid, load_lidar_data, generate_occupancy_grid_polar
+from vaemodel import load_vae_model
 from scipy.io import loadmat
+
+
+# Import torch for VAE model loading
+try:
+    import torch
+    import torch.nn as nn
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+    print("Warning: PyTorch not available. VAE functionality will be disabled.")
 
 # def load_rate_map():
 #     nx_csv = 41
@@ -33,7 +44,28 @@ from scipy.io import loadmat
 #         rate_maps[i,:,:] = np.flip(np.reshape(rate_maps_csv[:,i], [nx_csv, ny_csv]),0)
 #         # rate_maps_sum += rate_maps[i,:,:]
 #     return rate_maps
+
+
+
+
+def map_address(ix,iy,nx):
+    """map address for a matrix of size nx*ny to a  vectorized version index"""
+    return iy*nx+ix
+
+def vectorize_matrix(P):
+    ny = np.shape(P)[0]
+    nx = np.shape(P)[1]
+    out = np.zeros((int(nx*ny), 1))
+    for iy in range(ny):
+        for ix in range(nx):
+            out[int(iy*nx+ix)] = P[iy, ix]
+    return out
+
+
+
 def load_mat_files(directory, mod=1, xmin=None, ymin=None, dx=None, dy=None, nx=None, ny=None):
+    if directory == None:
+        return
     '''Get the list of all .mat files in the directory'''
     # if mod == 0:
     #     num_neurons = 100
@@ -151,64 +183,8 @@ def load_mat_files(directory, mod=1, xmin=None, ymin=None, dx=None, dy=None, nx=
  
         return output
 
-    
-
-def rate_maps_select(i_cell, rate_maps):
-    ##########retruns the cell rate maps for the given cell_number
-    if i_cell == 0:
-        return rate_maps[:,1:10, 1:10]
-    if i_cell == 1:
-        return rate_maps[:,10:20, 1:10]
-    elif i_cell == 2:
-        return rate_maps[:,20:30,1:10]
-    elif i_cell == 3:
-        return rate_maps[:,30:40,1:10]
-    elif i_cell == 4:
-        return rate_maps[:,30:40,10:20]
-    elif i_cell == 5:
-        return rate_maps[:,30:39,20:30]
-    elif i_cell == 6:
-        return rate_maps[:,30:39,30:40]
-    elif i_cell == 7:
-        return rate_maps[:,20:30,30:40]
-    elif i_cell == 8:
-        return rate_maps[:,20:30,20:30]
-    elif i_cell == 9:
-        return rate_maps[:,20:30,10:20]
-    elif i_cell == 10:
-        return rate_maps[:,10:20,10:20]
-    elif i_cell == 11:
-        return rate_maps[:,1:10,10:20]
 
 
-
-
-def rate_maps_select_triangles(i_cell, rate_maps):
-    ##########retruns the cell rate maps for the given cell_number
-    if i_cell == 0:
-        return rate_maps[:,1:10, 1:20]
-    if i_cell == 1:
-        return rate_maps[:,1:20, 1:10]
-    elif i_cell == 2:
-        return rate_maps[:,10:30,1:10]
-    elif i_cell == 3:
-        return rate_maps[:,20:40,1:10]
-    elif i_cell == 4:
-        return rate_maps[:,30:40,0:20]
-    elif i_cell == 5:
-        return rate_maps[:,30:40,10:30]
-    elif i_cell == 6:
-        return rate_maps[:,30:39,20:39]
-    elif i_cell == 7:
-        return rate_maps[:,21:40,30:39]
-    elif i_cell == 8:
-        return rate_maps[:,20:30,20:40]
-    elif i_cell == 9:
-        return rate_maps[:,20:30,10:30]
-    elif i_cell == 10:
-        return rate_maps[:,10:30,10:20]
-    elif i_cell == 11:
-        return rate_maps[:,1:20,10:20]
 
 
 class observation():
@@ -233,7 +209,7 @@ class observation():
         iy =  int( np.round ((dis_rel[1])/(self.dy)*(self.ny-1)))
        
         Po[iy,ix] = 1
-    
+        Po = np.flip(Po, axis=0)
         return Po
     def guass(self, x):
         Po = np.zeros((self.ny,self.nx))
@@ -307,17 +283,6 @@ class Discrertized_Linear_Controller():
 
 
 
-def vectorize_matrix(P):
-    ny = np.shape(P)[0]
-    nx = np.shape(P)[1]
-    out = np.zeros((int(nx*ny), 1))
-    for iy in range(ny):
-        for ix in range(nx):
-            out[int(iy*nx+ix)] = P[iy, ix]
-   
-    return out
-
-
 
 def cbf(x_pos, AH, bH):
      c =(AH@x_pos+np.reshape(bH, (-1,1) ))
@@ -336,18 +301,28 @@ def polygon(x_pos, Ax, bx):
 
 
 
+def load_RSC_data():
+    dir = '/home/mehdi/NerualRateMaps/allocentric_ratemaps/RSC/data'
+    files = os.listdir(dir)
+    output = []
+    for file in files:
+        data = np.load(os.path.join(dir, file))
+        output.append(data)
+    return np.array(output)
+
 
 
 
 class Control_cal():
-    def __init__(self, cell, A, B, dt,ch,cv, eps, sigma_max , grid_size_x, grid_size_y , directory_mat, directory_save ,con_lim = 4):
+    def __init__(self, cell, A, B, dt,ch,cv, eps, sigma_max , grid_size_x, grid_size_y , directory_mat, directory_save ,con_lim = 4, measurement_mode = 'neural_lidar'):
         
         self.nx = grid_size_x
         self.ny = grid_size_y
         self.gs = [self.nx,self.ny]
-       
+        self.measurement_mode = measurement_mode
+        print('***********measurement_mode='+self.measurement_mode+'***********')
         self.cell = cell
-      
+        self.RSC_data = load_RSC_data()
        
         self.ch = ch
         self.cv = cv
@@ -413,19 +388,127 @@ class Control_cal():
                     pos_key = (round(x, 10), round(y, 10))
                     self.position_to_file[pos_key] = file_data
         
-        self.kernel  = load_mat_files(directory_mat, xmin=self.xmin, ymin=self.ymin, 
-                                      dx=self.d[0], dy=self.d[1], nx=self.nx, ny=self.ny)
+        # self.kernel  = load_mat_files2(directory_mat, xmin=self.xmin, ymin=self.ymin, 
+        #                               dx=self.d[0], dy=self.d[1], nx=self.nx, ny=self.ny)
         
-        
-        
-        # n =100
-        # A = np.random.randn(100, 100)
-        # # Perform QR decomposition
-        # Q, R = np.linalg.qr(A)
-        # self.kernel = Q
-    
      
-   
+        
+        
+        n =100
+        A = np.random.randn(100, 100)
+        # Perform QR decomposition
+        Q, R = np.linalg.qr(A)
+        self.kernel = Q
+        # self.lidar_mode = True
+        if self.measurement_mode == 'vae':
+            # Load VAE model for lidar scan processing
+            vae_model_path = 'lidar_vae_model.pth'  # Path to saved VAE model
+            if os.path.exists(vae_model_path) and TORCH_AVAILABLE:
+                try:
+                    self.VAE, self.vae_data_min, self.vae_data_max = load_vae_model(
+                        model_path=vae_model_path,
+                        device='cpu'  # Use CPU by default, change to 'cuda' if GPU available
+                    )
+                    self.vae_device = next(self.VAE.parameters()).device
+                    print(f"VAE model loaded successfully for cell controller")
+                except Exception as e:
+                    print(f"Warning: Failed to load VAE model: {e}")
+                    self.VAE = None
+            else:
+                print(f"Warning: VAE model file not found at {vae_model_path} or PyTorch not available")
+                self.VAE = None
+    
+
+
+
+        self.kernel = self.load_mat_files2(directory_mat)
+        self.kernel_ls = [self.kernel]
+      
+        # self.kernel_ls =  [np.log(np.abs(self.kernel)+1)/np.max(np.abs(self.kernel)), np.sin(self.kernel)]
+
+    
+    def load_mat_files2(self, directory):
+            if directory == None:
+                return
+        
+
+            grid_data = {}
+
+            # Iterate through the directory and process each .mat file
+            for filename in os.listdir(directory):
+                if filename.endswith('.npy'):
+                    # Extract x and y coordinates from the filename
+                    # Format: 'nr_X_yY_HD270.npy'
+                    name_parts = filename.split('_')
+                    x_str = name_parts[1].replace('nr', '')
+                    y_str = name_parts[2].replace('y', '')
+                    
+                    x = float(x_str)
+                    y = float(y_str)
+                    
+                    # Load the .npy file
+                    # the measurement vector 
+                    
+                    filename_json = filename.replace('.npy', '.json')
+                    
+                    
+                    if self.measurement_mode == 'vae':
+                        lidar_data = load_lidar_data(os.path.join(directory, filename_json))['lidar_scan']
+                        lidar_ranges = lidar_data['ranges']
+                        measurement = self.encode_lidar_with_vae(lidar_ranges)
+                    elif self.measurement_mode == 'neural_lidar':
+                        json_file = os.path.join(directory, filename_json)
+                        occupancy_grid_polar, polar_params = generate_occupancy_grid_polar(json_file)
+                        measurement = []
+                        for i in range(len(self.RSC_data)):
+                            measurement.append(np.sum(self.RSC_data[i]*occupancy_grid_polar.T))
+                        measurement = np.array(measurement)
+                        
+                        
+                        
+                        
+                    elif self.measurement_mode == 'neural_rate':
+                        measurement = np.load(os.path.join(directory, filename)).flatten()
+                    # 
+                    # Store the data in a dictionary with keys as (x, y) tuples
+                    grid_data[(x, y)] = measurement
+
+            # Extract grid parameters from the coordinate values
+            x_coords = sorted(set([coord[0] for coord in grid_data.keys()]))
+            y_coords = sorted(set([coord[1] for coord in grid_data.keys()]))
+            
+            nx = len(x_coords)
+            ny = len(y_coords)
+            print('nx, ny = ', nx, ny)  
+            # Initialize output kernel matrix (100 neurons x nx*ny grid positions)
+            output = np.zeros([len(measurement), nx * ny])
+            
+            # Build kernel by placing each file in the column it maps to
+            # Process files in sorted order (by y, then x) so that later files overwrite earlier ones
+            # This ensures deterministic behavior when multiple files map to the same column
+            col_best_match = {}  # col_idx -> measurement
+            
+            # Sort grid_data items to ensure consistent processing order
+            # Sort by y first (ascending), then x (ascending) to match file naming convention
+            sorted_items = sorted(grid_data.items(), key=lambda item: (item[0][1], item[0][0]))
+            mis_ls = []
+        
+            for (x, y), measurement in sorted_items:
+                pos = np.array([[x],[y]])
+                Po = self.obs.obs(pos)
+                Po_vec = vectorize_matrix(Po)
+                idx = np.argmax(Po_vec)
+                
+                output[:, idx] = measurement.copy()
+                if x == 0.16 and y == 0.79:
+                    self.nr_i = measurement
+                    self.idx_i = idx
+            
+                
+            output = np.array(output)
+            print('kernel rank', np.linalg.matrix_rank(output))
+
+            return output
 
     
     def get_theta(self):
@@ -433,7 +516,7 @@ class Control_cal():
         # nx,ny = self.nx, self.ny
         # nx,ny = self.gs[0],self.gs[1]
 
-        nx, ny = 10,10
+        nx, ny = self.nx, self.ny
         dx= self.d[0]
         dy= self.d[1]
     
@@ -456,7 +539,7 @@ class Control_cal():
         tyT = np.reshape(tyT, [1,-1])
         self.txT = txT
         self.tyT = tyT
-        self.U = np.array([self.txT[0],self.tyT[0]])
+        self.U = np.array([self.txT[0],np.flip(self.tyT[0], axis=0)])
         
         szp = int(nx*ny)
         ### Making Ap
@@ -473,7 +556,8 @@ class Control_cal():
     def check_Probability_constraints(self,x_pos, y_pos):
         pos = np.array([[x_pos],[y_pos]])
         P = self.obs.obs(pos)     
-        P_vec = P.reshape([-1,1])
+        # P_vec = P.reshape([-1,1])
+        P_vec = vectorize_matrix(P)
         x_obs = self.U@P_vec
         print('U@P=',x_obs)
         print(self.Ap@P_vec+self.Ax2@pos+self.bp)
@@ -551,7 +635,11 @@ class Control_cal():
         return np.array(Ah),np.reshape(np.array(bH),(-1,1))
     
     def u(self, P_vec):
-        u = self.K@self.kernel@P_vec+self.Kb
+        # u = self.K@self.kernel@P_vec+self.Kb
+        u = 0
+        for i in range(len(self.kernel_ls)):
+            u += self.K[i]@self.kernel_ls[i]@P_vec
+        u += self.Kb
         # con_lim = self.con_lim
         # if np.abs(u[0])>con_lim:
         #     u[0] = con_lim*u[0]/np.abs(u[0])
@@ -578,6 +666,61 @@ class Control_cal():
         print('control', u)
         return u
     
+    def encode_lidar_with_vae(self, lidar_ranges):
+        """
+        Encode lidar scan ranges using the VAE model.
+        
+        Args:
+            lidar_ranges: numpy array of lidar ranges (shape: [640] or [N, 640])
+        
+        Returns:
+            numpy array: Encoded latent representation (shape: [latent_dim] or [N, latent_dim])
+        """
+        if self.VAE is None:
+            raise ValueError("VAE model not loaded. Set measurmenet_mode='vae' and ensure model file exists.")
+        
+        if not TORCH_AVAILABLE:
+            raise ImportError("PyTorch is required for VAE encoding")
+        
+        # Convert to numpy array if needed
+        if not isinstance(lidar_ranges, np.ndarray):
+            lidar_ranges = np.array(lidar_ranges)
+        
+        # Handle single sample vs batch
+        single_sample = len(lidar_ranges.shape) == 1
+        if single_sample:
+            lidar_ranges = lidar_ranges.reshape(1, -1)
+        
+        # Convert to numpy array and ensure float32
+        if isinstance(lidar_ranges, torch.Tensor):
+            lidar_ranges = lidar_ranges.cpu().numpy()
+        lidar_ranges = np.array(lidar_ranges, dtype=np.float32)
+        
+        # Normalize data (same normalization as training)
+        # Normalization parameters should be Python scalars (converted in load_vae_model)
+        data_min = float(self.vae_data_min)
+        data_max = float(self.vae_data_max)
+        
+        lidar_normalized = (lidar_ranges - data_min) / (data_max - data_min + 1e-8)
+        
+        # Convert to torch tensor with float32 dtype and move to device
+        lidar_tensor = torch.from_numpy(lidar_normalized).float().to(self.vae_device)
+        
+        # Encode to latent space
+        with torch.no_grad():
+            mu, logvar = self.VAE.encode(lidar_tensor)
+            # Use mean of latent distribution (or use reparameterize for sampling)
+            z = mu  # Or use: z = self.VAE.reparameterize(mu, logvar) for sampling
+        
+        # Convert back to numpy
+        z_numpy = z.cpu().numpy()
+        
+        # Return single sample or batch
+        if single_sample:
+            return z_numpy[0]
+        else:
+            return z_numpy
+    
 
 
     def check_P_U(self, x_pos, y_pos):
@@ -595,6 +738,7 @@ class Control_cal():
     def vector_F(self):
 
         obs = observation(self.l, self.eps, self.sigma_max, self.gs, self.d)
+        # obs = obs = observation(self.l, self.eps, self.sigma_max, [10,10], self.d)
         CD = Discrertized_Linear_Controller(self.A, self.B, self.dt)
         A_dis, B_dis = CD()
         X  = np.linspace(self.xmin,self.xmax,10)
@@ -794,7 +938,7 @@ class Control_cal():
     def get_K(self,cbf_lb= 0, clf_lb = 0): 
         print('wh', )
         wh = 155
-        wv =1.0
+        wv =1.21
         print('wh', wh)
         nx,ny = self.gs[0],self.gs[1]
         
@@ -814,15 +958,18 @@ class Control_cal():
         m = gp.Model()
         # ###Defining the Optimization problem
 
-        control_lim = 5
+        control_lim = 10**-5
        
         
 
 
-        nk = 100
+        
 
         # kernel_ls =[self.U]
-        K = m.addMVar((2,nk), ub = control_lim, lb = -control_lim, name = 'K')
+        n_kernels = len(self.kernel_ls)
+        # K = m.addMVar((2,nk), ub = control_lim, lb = -control_lim, name = 'K')
+        nk = len(self.kernel_ls[0])
+        K = m.addMVar((n_kernels,2,nk), ub = control_lim, lb = -control_lim, name = 'K')
 
         control_lim_b = 5
         Kb = m.addMVar((2,1), ub = control_lim_b, lb = -control_lim_b, name = 'Kb')
@@ -857,8 +1004,10 @@ class Control_cal():
         ey = np.array([[0,1]])
         tempv = (self.v@self.B)
         Mpv = 0
-      
-        Mpv = np.kron(tempv, self.kernel.T) @ K.reshape(-1)
+        
+        # Mpv = np.kron(tempv, self.kernel.T) @ K.reshape(-1)
+        for i in range(n_kernels):
+            Mpv += np.kron(tempv, self.kernel_ls[i].T) @ K[i].reshape(-1)
         xj = np.reshape(self.cell.exit_vrt[0],(2,1))
         rv= -(self.cv*self.v@xj)+self.v@Kb
         
@@ -894,9 +1043,12 @@ class Control_cal():
             
             Mxh = -self.AH[ih]@self.A-self.ch*self.AH[ih]
             temph = (-np.array([self.AH[ih]])@self.B)
-            # Mph = 0
             
-            Mph = np.kron(temph, self.kernel.T) @ K.reshape(-1) 
+            
+            Mph = 0
+            # Mph = np.kron(temph, self.kernel.T) @ K.reshape(-1) 
+            for i in range(n_kernels):
+                Mph += np.kron(temph, self.kernel_ls[i].T) @ K[i].reshape(-1)
 
             
             m.addConstr(-Mxh+lph[ih]@self.Ax2+lxh[ih]@self.Ax == 0)
@@ -922,6 +1074,7 @@ class Control_cal():
         m.optimize()
         if m.Status == GRB.OPTIMAL:
             print('K=', K.X)
+            print('K shape', K.X.shape)
             self.K = K.X
 
             # self.Mp =kernel_sum.X
@@ -933,6 +1086,7 @@ class Control_cal():
             print('Kb', Kb.X)
             print('dv,dh =' ,dv.X,dh.X)
             self.Kb = Kb.X
+           
             np.save(os.path.join(self.directory_save, 'K.npy'), self.K)
             np.save(os.path.join(self.directory_save, 'Kb.npy'), self.Kb)
 
@@ -1112,7 +1266,7 @@ class cell ():
    
 
 
-def gen_controller_all_orinetation(cell_i, directory_mat, directory_save, ch , cv, eps , sigma_max, dt  ):
+def gen_controller_all_orinetation(cell_i, directory_mat, directory_save, ch , cv, eps , sigma_max, dt, measurement_mode ):
 
     # dt = 0.001
     # # rate_maps = load_rate_map()
@@ -1138,13 +1292,13 @@ def gen_controller_all_orinetation(cell_i, directory_mat, directory_save, ch , c
         # A = np.ones((2,2))*0.1
         B = np.eye((2))
         print('*************************deg=',deg,'*************************')
-        s0=Control_cal(cell_i,A, B,dt,ch=ch,cv=cv ,sigma_max= sigma_max,eps=eps , grid_size_x=10,
-                        grid_size_y=10, directory_mat =directory_mat+str(deg) , directory_save = directory_save+str(deg) )
+        s0=Control_cal(cell_i,A, B,dt,ch=ch,cv=cv ,sigma_max= sigma_max,eps=eps , grid_size_x=4,
+                        grid_size_y=4, directory_mat =directory_mat+str(deg) , directory_save = directory_save+str(deg), measurement_mode = measurement_mode )
         # print('***************************************cell=',i_cell )
         # print(cv_ls[i_cell], ch_ls[i_cell], sigma_max_ls[i_cell], eps_ls[i_cell])
         # s0.plot_cell()
         # plt.show()
-        #
+        # #
 
        
         s0.get_K()
@@ -1159,7 +1313,7 @@ def gen_controller_all_orinetation(cell_i, directory_mat, directory_save, ch , c
 
 
 # delta_x = 0.001
-delta_x = 1*10**-3
+delta_x = 1.2*10**-3
 
 
 
@@ -1602,7 +1756,14 @@ Barrier=[
 exit_Vertices=[np.array([1.05, 0.15]), np.array([1.05, 0.0])],
 vrt=[np.array([1.05, 0.0]), np.array([1.20, 0.0]), np.array([1.20, 0.15]), np.array([1.05, 0.15])])
 
-
+c_test = cell(
+    Barrier=[
+        [np.array([0.15, 1.05]), np.array([0.45, 1.05])],
+        [np.array([0.45, 1.05]), np.array([0.45-delta_x, 0.75])],
+        [np.array([0.15, 1.05]), np.array([0.15+delta_x, 0.75])]
+        ],
+    exit_Vertices=[np.array([0.15, 0.75]), np.array([0.45, 0.75])],
+    vrt=[np.array([0.15, 1.05]), np.array([0.45, 1.05]), np.array([0.45, 0.75]), np.array([0.15, 0.75])])
 
 cell_ls = [c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20, c21, c22, c23, c24, c25, c26, c27, c28, c29, c30, c31,
              c32, c33, c34, c35, c36, c37, c38, c39, c40, c41, c42, c43, c44, c45, c46, c47 ]
@@ -1614,13 +1775,27 @@ if __name__ == '__main__':
     
     A = np.zeros((2,2))
     B = np.eye((2))
-
-    i_cell = 17
+    measurement_mode = 'vae'
+    i_cell = 14
     directory_mat = 'cells_kernels/c'+str(i_cell)+'/deg'
-    directory_save =  'cells_controllers/c'+str(i_cell)+'/deg'
+    # directory_save =  'cells_controllers/c'+str(i_cell)+'/deg'
+    if measurement_mode == 'vae':
+        directory_save = 'cells_controllers_vae'
+    elif measurement_mode == 'neural_lidar':
+        directory_save = 'cells_controllers_neural_lidar'
+    elif measurement_mode == 'neural_rate':
+        directory_save = 'cells_controllers'
+    directory_save = directory_save+'/c'+str(i_cell)+'/deg'
     print("###############################cell", str(i_cell))
     ###The most robust
-    # gen_controller_all_orinetation(cell_ls[i_cell], directory_mat, directory_save, ch =0.6*10**-2, cv=10**-2, eps = 6*10**-2, sigma_max = 10**-6, dt = 0.001 )
-    # gen_controller_all_orinetation(cell_ls[i_cell], directory_mat, directory_save, ch =0.4*10**-2, cv=7*10**-3, eps = 12*10**-3, sigma_max = 10**-6, dt = 0.001 )
-    gen_controller_all_orinetation(cell_ls[i_cell], directory_mat, directory_save, ch =0.2*10**-2, cv=8*10**-4, eps = 1*10**-3, sigma_max = 10**-6, dt = 0.001 )
-    # gen_controller_all_orinetation(cell_ls[i_cell], directory_mat, directory_save, ch =0.7*10**-2, cv=10*10**-5, eps = 1*10**-6, sigma_max = 10**-6, dt = 0.001 )
+    ### gen_controller_all_orinetation(cell_ls[i_cell], directory_mat, directory_save, ch =0.6*10**-2, cv=10**-2, eps = 6*10**-2, sigma_max = 10**-6, dt = 0.001 )
+    ### gen_controller_all_orinetation(cell_ls[i_cell], directory_mat, directory_save, ch =0.4*10**-2, cv=7*10**-3, eps = 12*10**-3, sigma_max = 10**-6, dt = 0.001 )
+    ### gen_controller_all_orinetation(cell_ls[i_cell], directory_mat, directory_save, ch =0.5*10**-2, cv=10*10**-4, eps = 1*10**-2, sigma_max = 10**-6, dt = 0.001 )
+    ### gen_controller_all_orinetation(cell_ls[i_cell], directory_mat, directory_save, ch =3.0*10**-3, cv=10**-3, eps = 10**-2, sigma_max = 10**-6, dt = 0.001 )
+    # gen_controller_all_orinetation(cell_ls[i_cell], directory_mat, directory_save, ch =5*10**-3, cv=50*10**-4, eps = 10**-2, sigma_max = 10**-6, dt = 0.001 )
+    
+    ###
+    ##neural_lidar mode
+    # gen_controller_all_orinetation(cell_ls[i_cell], directory_mat, directory_save, ch =20*10**-3, cv=5*10**-4, eps = 10**-2, sigma_max = 10**-6, dt = 0.001, measurement_mode = measurement_mode )
+    ##VAE mode
+    gen_controller_all_orinetation(cell_ls[i_cell], directory_mat, directory_save, ch =20*10**-3, cv=1*10**-4, eps = 10**-2, sigma_max = 10**-6, dt = 0.001, measurement_mode = measurement_mode )

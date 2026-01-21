@@ -3,8 +3,14 @@ import numpy as np
 from gen_vec_field_from_perception import plot_vec
 from gen_controller import cell, cell_ls
 class control_gain_load():
-    def __init__(self):
-        self.dir_control_gains = 'cells_controllers'
+    def __init__(self, measurement_mode):
+        self.measurement_mode = measurement_mode
+        if self.measurement_mode == 'vae':
+            self.dir_control_gains = 'cells_controllers_vae'
+        elif self.measurement_mode == 'neural_lidar':
+            self.dir_control_gains = 'cells_controllers_neural_lidar'
+        elif self.measurement_mode == 'neural_rate':
+            self.dir_control_gains = 'cells_controllers'
        
 
 
