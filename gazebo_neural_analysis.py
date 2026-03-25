@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 import os
 import sys
 import time
-# import matlab.engine
+import matlab.engine
 from gen_controller import cell_ls
 from find_controller_orientation import control_gain_load
 import argparse
@@ -213,8 +213,8 @@ class GazeboNeuralAnalysisNode(Node):
         self.VX, self.VY = 150, 90  # Target image size
         self.sc_img = 1
         self.cam_far = int(3000/self.sc_img)
-        
-        self.measurement_mode = 'vae'
+        # measurement mode = ['neural_rate', 'neural_lidar', 'vae']
+        self.measurement_mode = 'neural_rate'
         # Initialize control system components
         self.cell_ls = cell_ls
         self.control_gain_load = control_gain_load(self.measurement_mode)
@@ -230,17 +230,17 @@ class GazeboNeuralAnalysisNode(Node):
         self.current_grid_occ = None
         time.sleep(2)
         self.get_logger().info("Waiting for 2 seconds to start the node")
-        # Robot state
-        self.current_position = np.array([0.22, 0.7])  # Initial position
-        self.current_hd = 270  #Initial heading direction
+        # # Robot state
+        # self.current_position = np.array([0.22, 0.7])  # Initial position
+        # self.current_hd = 270  #Initial heading direction
 
 
 
-        # self.current_position = np.array([0.4, 0.2])  # Initial position
-        # self.current_hd = 0  #Initial heading direction
+        self.current_position = np.array([1.0, 0.2])  # Initial position
+        self.current_hd = 90  #Initial heading direction
 
         self.current_step = 0
-        self.num_steps = 150
+        self.num_steps = 300
         self.RSC_data = load_RSC_data()
         # self.current_position = self.current_position - self.bias_position
         
@@ -459,7 +459,7 @@ class GazeboNeuralAnalysisNode(Node):
                 "range_min": float(scan_msg.range_min),
                 "range_max": float(scan_msg.range_max)
             }
-            # self.current_grid_occ = generate_occupancy_grid_polar(self.current_scan)[0]
+            self.current_grid_occ = generate_occupancy_grid_polar(self.current_scan)[0]
             # self.get_logger().info(f"[SCAN] Stored lidar scan: {len(scan_msg.ranges)} points, range: [{scan_msg.range_min:.2f}, {scan_msg.range_max:.2f}], angles: [{scan_msg.angle_min:.2f}, {scan_msg.angle_max:.2f}]")
         except Exception as e:
             self.get_logger().error(f"[SCAN] Error processing scan: {e}", exc_info=True)
@@ -599,7 +599,7 @@ class GazeboNeuralAnalysisNode(Node):
             #     u[0] = 0
             
             # Normalize and scale
-            speed = 3.0
+            speed = 2.5
             u_normalized = u / np.linalg.norm(u)
             u_scaled = u_normalized * speed
             # u_scaled = np.array([[0], [0]])
@@ -669,7 +669,7 @@ class GazeboNeuralAnalysisNode(Node):
         else:
             return z_numpy
     
-    def update_state(self, neural_map, position, orientation, update_hd=True):
+    def update_state(self, neural_map, position, orientation, update_hd= True):
         """
         Update robot state based on neural map and control input.
         
@@ -865,8 +865,8 @@ class GazeboNeuralAnalysisNode(Node):
                 #     return
                 
                 # Generate neural rate from current image
-                # neural_rate = self.gen_neural_rate(self.current_image)
-                neural_rate = np.array([0,0])
+                neural_rate = self.gen_neural_rate(self.current_image)
+                # neural_rate = np.array([0,0])
                 if self.current_step == 0:
                     self.get_logger().info("Starting neural analysis...")
                 
@@ -925,9 +925,9 @@ class GazeboNeuralAnalysisNode(Node):
         self.grid_targets = []
         for cell_id in cell_id_ls:
             if self.mode == 'vector_feild':
-                num_points = 15
+                num_points = 6
             else:
-                num_points = 4
+                num_points = 6
             X, Y = gen_grid_points(cell_id, num_points)
             for heading in heading_ls:
                 for x, y in zip(X, Y):
@@ -1200,7 +1200,7 @@ def main(args=None):
     parser.add_argument(
         '--mode',
         choices=['controller', 'gen_data', 'vector_feild'],
-        default='gen_data',
+        default='controller',
         help="Operating mode for the node"
     )
     parser.add_argument(
@@ -1208,15 +1208,15 @@ def main(args=None):
         type=int,
         nargs='+',
         # default=list(range(0,48)),
-        default=[22,30,34,38,42],
+        default=[19],
         help="Cell IDs to include when generating data"
     )
     parser.add_argument(
         '--headings',
         type=float,
         nargs='+',
-        default=list(range(0, 360, 10)),
-        # default=[0],
+        # default=list(range(0, 360, 10)),
+        default=[90],
         help="Heading angles (degrees) to iterate when generating data"
     )
     parsed_args, remaining = parser.parse_known_args(args=args)

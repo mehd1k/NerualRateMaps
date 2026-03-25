@@ -741,8 +741,8 @@ class Control_cal():
         # obs = obs = observation(self.l, self.eps, self.sigma_max, [10,10], self.d)
         CD = Discrertized_Linear_Controller(self.A, self.B, self.dt)
         A_dis, B_dis = CD()
-        X  = np.linspace(self.xmin,self.xmax,10)
-        Y = np.linspace(self.ymin,self.ymax,10)
+        X  = np.linspace(self.xmin,self.xmax,self.gs[0])
+        Y = np.linspace(self.ymin,self.ymax,self.gs[1])
         ux_ls = []
         uy_ls = []
         
@@ -958,7 +958,7 @@ class Control_cal():
         m = gp.Model()
         # ###Defining the Optimization problem
 
-        control_lim = 10**-5
+        control_lim = 10**-3
        
         
 
@@ -1286,14 +1286,14 @@ def gen_controller_all_orinetation(cell_i, directory_mat, directory_save, ch , c
     # # plt.imshow(np.sum(rate_maps_cell, axis= 0))
     # # plt.colorbar()
     # # plt.show()
-    for deg in range(0, 360, 10):
+    for deg in range(90, 360, 10):
             # A = np.zeros((2,2))
         A = np.zeros((2,2))
         # A = np.ones((2,2))*0.1
         B = np.eye((2))
         print('*************************deg=',deg,'*************************')
-        s0=Control_cal(cell_i,A, B,dt,ch=ch,cv=cv ,sigma_max= sigma_max,eps=eps , grid_size_x=4,
-                        grid_size_y=4, directory_mat =directory_mat+str(deg) , directory_save = directory_save+str(deg), measurement_mode = measurement_mode )
+        s0=Control_cal(cell_i,A, B,dt,ch=ch,cv=cv ,sigma_max= sigma_max,eps=eps , grid_size_x=6,
+                        grid_size_y=6, directory_mat =directory_mat+str(deg) , directory_save = directory_save+str(deg), measurement_mode = measurement_mode )
         # print('***************************************cell=',i_cell )
         # print(cv_ls[i_cell], ch_ls[i_cell], sigma_max_ls[i_cell], eps_ls[i_cell])
         # s0.plot_cell()
@@ -1775,8 +1775,8 @@ if __name__ == '__main__':
     
     A = np.zeros((2,2))
     B = np.eye((2))
-    measurement_mode = 'vae'
-    i_cell = 14
+    measurement_mode = 'neural_lidar'
+    i_cell = 19
     directory_mat = 'cells_kernels/c'+str(i_cell)+'/deg'
     # directory_save =  'cells_controllers/c'+str(i_cell)+'/deg'
     if measurement_mode == 'vae':
@@ -1792,10 +1792,10 @@ if __name__ == '__main__':
     ### gen_controller_all_orinetation(cell_ls[i_cell], directory_mat, directory_save, ch =0.4*10**-2, cv=7*10**-3, eps = 12*10**-3, sigma_max = 10**-6, dt = 0.001 )
     ### gen_controller_all_orinetation(cell_ls[i_cell], directory_mat, directory_save, ch =0.5*10**-2, cv=10*10**-4, eps = 1*10**-2, sigma_max = 10**-6, dt = 0.001 )
     ### gen_controller_all_orinetation(cell_ls[i_cell], directory_mat, directory_save, ch =3.0*10**-3, cv=10**-3, eps = 10**-2, sigma_max = 10**-6, dt = 0.001 )
-    # gen_controller_all_orinetation(cell_ls[i_cell], directory_mat, directory_save, ch =5*10**-3, cv=50*10**-4, eps = 10**-2, sigma_max = 10**-6, dt = 0.001 )
+    gen_controller_all_orinetation(cell_ls[i_cell], directory_mat, directory_save, ch =10*10**-3, cv=10*10**-4, eps = 10**-2, sigma_max = 10**-6, dt = 0.001, measurement_mode = measurement_mode )
     
     ###
     ##neural_lidar mode
     # gen_controller_all_orinetation(cell_ls[i_cell], directory_mat, directory_save, ch =20*10**-3, cv=5*10**-4, eps = 10**-2, sigma_max = 10**-6, dt = 0.001, measurement_mode = measurement_mode )
     ##VAE mode
-    gen_controller_all_orinetation(cell_ls[i_cell], directory_mat, directory_save, ch =20*10**-3, cv=1*10**-4, eps = 10**-2, sigma_max = 10**-6, dt = 0.001, measurement_mode = measurement_mode )
+    # gen_controller_all_orinetation(cell_ls[i_cell], directory_mat, directory_save, ch =20*10**-3, cv=1*10**-4, eps = 10**-2, sigma_max = 10**-6, dt = 0.001, measurement_mode = measurement_mode )
