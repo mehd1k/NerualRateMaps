@@ -214,7 +214,7 @@ class GazeboNeuralAnalysisNode(Node):
         self.sc_img = 1
         self.cam_far = int(3000/self.sc_img)
         
-        self.measurement_mode = 'vae'
+        self.measurement_mode = 'neural_lidar'
         # Initialize control system components
         self.cell_ls = cell_ls
         self.control_gain_load = control_gain_load(self.measurement_mode)
@@ -459,7 +459,7 @@ class GazeboNeuralAnalysisNode(Node):
                 "range_min": float(scan_msg.range_min),
                 "range_max": float(scan_msg.range_max)
             }
-            # self.current_grid_occ = generate_occupancy_grid_polar(self.current_scan)[0]
+            self.current_grid_occ = generate_occupancy_grid_polar(self.current_scan)[0]
             # self.get_logger().info(f"[SCAN] Stored lidar scan: {len(scan_msg.ranges)} points, range: [{scan_msg.range_min:.2f}, {scan_msg.range_max:.2f}], angles: [{scan_msg.angle_min:.2f}, {scan_msg.angle_max:.2f}]")
         except Exception as e:
             self.get_logger().error(f"[SCAN] Error processing scan: {e}", exc_info=True)
@@ -1200,7 +1200,7 @@ def main(args=None):
     parser.add_argument(
         '--mode',
         choices=['controller', 'gen_data', 'vector_feild'],
-        default='gen_data',
+        default='controller',
         help="Operating mode for the node"
     )
     parser.add_argument(

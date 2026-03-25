@@ -90,7 +90,7 @@ def visualization(bars):
             ax.plot([env_vrt[0][0], env_vrt[-1][0]], [env_vrt[0][1], env_vrt[-1][1]], color = 'red')
             # fig.show()
         ax.set_aspect('equal')
-        fig.savefig('trj/traj_pt.png', dpi= 600)
+        fig.savefig('trj/traj_pt.png', dpi= 200)
 
 
 
