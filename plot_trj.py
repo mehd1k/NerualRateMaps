@@ -48,8 +48,8 @@ def create_triangle(x, y, angle, size=0.02):
 
 
 def visualization(bars):
-        traj = np.load('trj/postion_ls_final.npy')
-        hd_ls = np.load('trj/hd_ls_final.npy')*np.pi/180
+        traj = np.load('trj/postion_ls.npy')
+        hd_ls = np.load('trj/hd_ls.npy')*np.pi/180
         
 
 
@@ -90,54 +90,7 @@ def visualization(bars):
             ax.plot([env_vrt[0][0], env_vrt[-1][0]], [env_vrt[0][1], env_vrt[-1][1]], color = 'red')
             # fig.show()
         ax.set_aspect('equal')
-        fig.savefig('trj/traj_pt.png', dpi= 600)
-
-
-
-
-def visualization_with_control(bars):
-        traj = np.load('trj/postion_ls_final.npy')
-        hd_ls = np.load('trj/hd_ls_final.npy')*np.pi/180
-        u_ls = np.load('trj/u_ls_final.npy')
-
-
-        dx = np.cos(hd_ls)
-        dy = np.sin(hd_ls)
-
-        # Plot the trajectory
-        fig, ax = plt.subplots()
-        end_i = 1
-        ax.plot(traj[:-end_i, 0], traj[:-end_i, 1], color='green', linestyle='dashed', linewidth=2, label="Trajectory")
-
-        # Add orientation vectors using quiver
-        ax.quiver(traj[:-end_i, 0], traj[:-end_i, 1], dx[:-end_i], dy[:-end_i], color='blue', scale=50, width=0.005, label="Orientation")
-        ax.quiver(traj[:-end_i, 0], traj[:-end_i, 1], u_ls[:-end_i, 0], u_ls[:-end_i, 1], color='red', scale=50, width=0.005, label="Control")
-
-
-
-        # for i in range(len(traj)):
-        #     triangle = create_triangle(traj[i, 0], traj[i, 1], hd_ls[i], size=0.01)
-        #     ax.add_patch(triangle)
-       
-        
-        ###Ploting cells
-        for num_cell, cell in enumerate(cell_ls_vis):
-            # if num_cell == 8:
-            #      pass
-            num_vrt = len(cell.vrt)-1
-            for i in range(num_vrt):
-                ax.plot([cell.vrt[i][0], cell.vrt[i+1][0]], [cell.vrt[i][1], cell.vrt[i+1][1]], color = 'gray')
-
-            ax.plot([cell.vrt[0][0], cell.vrt[-1][0]], [cell.vrt[0][1], cell.vrt[-1][1]], color = 'gray')
-       
-        for env_vrt in bars:
-            for i in range(len(env_vrt)-1):
-                ax.plot([env_vrt[i][0], env_vrt[i+1][0]], [env_vrt[i][1], env_vrt[i+1][1]], color = 'red')
-
-            ax.plot([env_vrt[0][0], env_vrt[-1][0]], [env_vrt[0][1], env_vrt[-1][1]], color = 'red')
-            # fig.show()
-        ax.set_aspect('equal')
-        fig.savefig('trj/traj_pt.png', dpi= 600)
+        fig.savefig('trj/traj_pt.png', dpi= 300)
 
 
 
@@ -267,5 +220,4 @@ bars = [[[0, 1.2],[0, 0], [1.2, 0], [1.2 ,0.6], [0.6, 0.6], [0.6, 1.2]] ]
 
 
 visualization(bars)
-# visualization_with_control(bars)
 # gif_maker(bars)       

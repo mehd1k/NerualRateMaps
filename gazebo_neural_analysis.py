@@ -214,7 +214,7 @@ class GazeboNeuralAnalysisNode(Node):
         self.sc_img = 1
         self.cam_far = int(3000/self.sc_img)
         # measurement mode = ['neural_rate', 'neural_lidar', 'vae']
-        self.measurement_mode = 'neural_rate'
+        self.measurement_mode = 'neural_lidar'
         # Initialize control system components
         self.cell_ls = cell_ls
         self.control_gain_load = control_gain_load(self.measurement_mode)
@@ -603,7 +603,8 @@ class GazeboNeuralAnalysisNode(Node):
             u_normalized = u / np.linalg.norm(u)
             u_scaled = u_normalized * speed
             # u_scaled = np.array([[0], [0]])
-            self.get_logger().debug(f"Control input: {u_scaled.flatten()}")
+            # self.get_logger().info(f"Control input: {u_scaled.flatten()}")
+            # print(f"Control input: {u_scaled.flatten()}")
             
             return u_scaled.reshape(2,1)
             
@@ -870,7 +871,7 @@ class GazeboNeuralAnalysisNode(Node):
                 if self.current_step == 0:
                     self.get_logger().info("Starting neural analysis...")
                 
-                self.get_logger().info(f"Neural Rate: {neural_rate.flatten()[:5]}...")  # Log first 5 values
+                # self.get_logger().info(f"Neural Rate: {neural_rate.flatten()[:5]}...")  # Log first 5 values
                 
                 # Update robot state
                 self.current_position, self.current_hd = self.update_state(
@@ -1073,7 +1074,7 @@ class GazeboNeuralAnalysisNode(Node):
                 
                 
             
-            self.get_logger().info(f"Neural Rate: {neural_rate.flatten()[:5]}...")  # Log first 5 values
+            # self.get_logger().info(f"Neural Rate: {neural_rate.flatten()[:5]}...")  # Log first 5 values
             
             # Update robot state
             self.current_position = position.copy()
@@ -1208,7 +1209,7 @@ def main(args=None):
         type=int,
         nargs='+',
         # default=list(range(0,48)),
-        default=[19],
+        default=[18],
         help="Cell IDs to include when generating data"
     )
     parser.add_argument(
