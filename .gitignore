@@ -1,3 +1,7 @@
+# Large data archives (extract locally; code uses allocentric_ratemaps/)
+allocentric_ratemaps.zip
+allocentric_ratemaps/
+
 # Ignore data folders
 cells_kernels/
 cells_kernels_images/
