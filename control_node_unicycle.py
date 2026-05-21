@@ -36,6 +36,7 @@ from vaemodel import load_vae_model
 from gen_controller import vectorize_matrix, load_RSC_data
 from plot_vector_field_from_lidar import generate_occupancy_grid_scan
 import time
+from nav_msgs.msg import Odometry
 # Import torch for VAE model loading
 try:
     import torch
@@ -44,6 +45,11 @@ try:
 except ImportError:
     TORCH_AVAILABLE = False
     print("Warning: PyTorch not available. VAE functionality will be disabled.")
+def quaternion_to_yaw(q):
+    """Extract yaw (heading) in radians from a quaternion (x, y, z, w)."""
+    siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+    cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+    return math.atan2(siny_cosp, cosy_cosp)
 
 def compress_highlights(img_bgr):
     # img_bgr in [0,1] float32 preferred
@@ -252,6 +258,9 @@ class GazeboNeuralAnalysisNode(Node):
         self.hd_ls = []
         self.ratemap_ls = []
         self.u_ls = []
+        self.v_ls = []
+        self.omega_ls = []
+        self.odom_ls = []
         
         # State tracking for gen_data mode
         self.pose_published = False  # Track if we've published pose for current step
@@ -265,7 +274,7 @@ class GazeboNeuralAnalysisNode(Node):
         scan_qos = qos_profile_sensor_data
         self.scan_sub = self.create_subscription(
             LaserScan, 
-            '/scan', 
+            '/demo/scan', 
             self.scan_callback, 
             scan_qos
         )
@@ -276,9 +285,25 @@ class GazeboNeuralAnalysisNode(Node):
         self.ts.registerCallback(self.image_callback)
         
         # Create publishers for robot control
-        self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+        ##linear model 
+        self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel_linear', 10)
         # self.pose_pub = self.create_publisher(PoseStamped, '/robot_pose', 10)
-        self.publisher_pose = self.create_publisher(JointTrajectory, '/set_joint_trajectory', 10)
+        # self.publisher_pose = self.create_publisher(JointTrajectory, '/set_joint_trajectory', 10)
+
+
+
+        # edited by melinda (unicycle model)
+        # self._scan_sub = self.create_subscription(
+        #     LaserScan, "/demo/scan", self._scan_cb, 10,
+        # )
+        self._pose_sub = self.create_subscription(
+            #PoseStamped, "/vrpn_client_node/jackal/pose", self._pose_cb, 10,
+            Odometry, "/demo/odom_demo", self._pose_cb, 10,
+        )
+        # edited by melinda
+        self._control_pub = self.create_publisher(
+            Twist, "/demo/cmd_demo", 10
+        )
         
         # TF buffer for coordinate transformations
         self.tf_buffer = Buffer()
@@ -289,46 +314,10 @@ class GazeboNeuralAnalysisNode(Node):
 
 
     
-        if self.measurement_mode == 'vae':
-            # Load VAE model for lidar scan processing
-            # Try multiple possible paths to find the model file
-            # This is important because ROS2 nodes may run from different working directories
-            # possible_paths = [
-            #     'lidar_vae_model.pth',  # Relative to current working directory
-            #     os.path.join(os.path.dirname(__file__), 'lidar_vae_model.pth'),  # Relative to script location
-            #     os.path.expanduser('~/NerualRateMaps/lidar_vae_model.pth'),  # Absolute home path
-            #     '/home/mehdi/NerualRateMaps/lidar_vae_model.pth'  # Hardcoded absolute path as fallback
-            # ]
-            
-            # vae_model_path = None
-            # for path in possible_paths:
-            #     abs_path = os.path.abspath(path)
-            #     if os.path.exists(abs_path):
-            #         file_size = os.path.getsize(abs_path)
-            #         if file_size > 1000:  # Valid file size
-            #             vae_model_path = abs_path
-            #             self.get_logger().info(f"Found VAE model at: {vae_model_path}")
-            #             break
-            
         
-            self.VAE, self.vae_data_min, self.vae_data_max = load_vae_model(
-                device='cpu'  # Use CPU by default, change to 'cuda' if GPU available
-            )
-            self.vae_device = 'cpu'
-                    
-    
-        self.mode = mode
-        if mode == 'controller':
-            self.timer = self.create_timer(self.timer_period, self.process_callback)
-        elif mode == 'gen_data' or mode == 'vector_feild':
-            self._all_points(self.cell_id_list, self.heading_list)
-            self.timer = self.create_timer(self.timer_period, self.gen_data_callback)
-            if mode == 'vector_feild':
-                self.all_data = []
-        else:
-            self.get_logger().error(f"Invalid mode: {mode}")
-            sys.exit(1)        
-
+        
+        self.timer = self.create_timer(self.timer_period, self.process_callback)
+       
 
 
 
@@ -365,47 +354,41 @@ class GazeboNeuralAnalysisNode(Node):
         
         # Check if scan topic is available (async check after a short delay, run once)
         self.scan_check_done = False
-        self.create_timer(1.0, self.check_scan_topic)
+        # self.create_timer(1.0, self.check_scan_topic)
+
+
+    def _pose_cb(self, msg):
+        self._latest_pose = msg
+        # added extra pose because odometry messages wrap the pose inside another layer 
+        p = msg.pose.pose.position
+        q = msg.pose.pose.orientation
+        vx = msg.twist.twist.linear.x
+        vy = msg.twist.twist.linear.y
+        omega = msg.twist.twist.angular.z
+        self.current_position = np.array([p.x, p.y]).reshape(2, 1)
+        self.current_velocity = np.array([vx, vy, omega]).reshape(3, 1)
+        self.get_logger().info(f"current velocity: {vx:.3f}, {vy:.3f}, {omega:.3f}")
+        self.current_hd = quaternion_to_yaw(q)
+        self.current_hd_degree = self.current_hd * 180 / np.pi % 360
+        self.get_logger().info(
+            "pose: x=%.3f y=%.3f yaw=%.3f degree" % (p.x, p.y, self.current_hd_degree),
+            throttle_duration_sec=1.0,
+        )
+        self.current_cell = self.find_cell(self.current_position)
+        self.get_logger().info(f"current cell: {self.current_cell}")
     
-    def check_scan_topic(self):
-        """Check if scan topic is available and logging"""
-        if self.scan_check_done:
-            return
-        self.scan_check_done = True
-        
-        try:
-            # Get topic info
-            topics = self.get_topic_names_and_types()
-            scan_topics = [name for name, types in topics if 'scan' in name.lower()]
-            
-            if scan_topics:
-                self.get_logger().info(f"Found scan-related topics: {scan_topics}")
-            else:
-                self.get_logger().warn(f"WARNING: No scan topics found! Available topics: {[name for name, _ in topics[:10]]}")
-            
-            # Check if /scan specifically exists
-            topic_names = [name for name, _ in topics]
-            if '/scan' in topic_names:
-                self.get_logger().info("✓ /scan topic is available")
-                # Try to get topic info
-                try:
-                    publisher_count = len(self.get_publishers_info_by_topic('/scan'))
-                    subscriber_count = len(self.get_subscriptions_info_by_topic('/scan'))
-                    self.get_logger().info(f"  Publishers: {publisher_count}, Subscribers: {subscriber_count}")
-                    
-                    # Verify our subscription
-                    sub_info = self.get_subscriptions_info_by_topic('/scan')
-                    if sub_info:
-                        self.get_logger().info(f"  Our subscription: {sub_info[0].topic_name}, QoS: {sub_info[0].qos_profile}")
-                    else:
-                        self.get_logger().warn("  WARNING: Could not find our subscription to /scan!")
-                except Exception as e:
-                    self.get_logger().error(f"  Error getting topic info: {e}")
-            else:
-                self.get_logger().error("✗ /scan topic NOT found! Check your Gazebo model configuration.")
-                
-        except Exception as e:
-            self.get_logger().error(f"Error checking scan topic: {e}")
+    
+        if self.current_cell is not None:
+            self.get_logger().info(
+                "current cell: %d" % (self.current_cell),
+                throttle_duration_sec=1.0,
+            )
+        # else:
+        #     self.get_logger().info(
+        #         "current cell: None",
+        #         throttle_duration_sec=1.0,)
+
+   
     
     def create_output_directories(self):
         """Create necessary output directories"""
@@ -556,11 +539,11 @@ class GazeboNeuralAnalysisNode(Node):
             Control input vector
         """
         try:
-            current_cell = self.find_cell(position)
+            # current_cell = self.find_cell(position)
             # current_cell = 48
             # Load control gains based on orientation
-            K, Kb = self.control_gain_load.interpolate_contorlgains(current_cell, orientation)
-            self.get_logger().info(f"cell_i: {current_cell}, orientation: {orientation}")
+            K, Kb = self.control_gain_load.interpolate_contorlgains(self.current_cell, orientation)
+            self.get_logger().info(f"cell_i: {self.current_cell}, orientation: {orientation}")
             # Calculate control input
         
             # if self.lidar_mode:
@@ -581,29 +564,18 @@ class GazeboNeuralAnalysisNode(Node):
                 # self.get_logger().info('measurement shape', measurement.shape)
                 # self.get_logger().info('controller shape', K.shape)
                 u = K[0]@measurement+Kb
-            elif self.measurement_mode == 'vae':
-                if self.current_scan is None:
-                    self.get_logger().warn("No lidar scan data available yet, using zero measurement")
-                    # Get latent dim from VAE model if available, otherwise default to 32
-                    latent_dim = getattr(self.VAE, 'latent_dim', 32) if self.VAE else 32
-                    measurement = np.zeros((latent_dim, 1))  # Match expected shape for matrix multiplication
-                else:
-                    measurement = self.encode_lidar_with_vae(self.current_scan['ranges'])
-                    # Ensure measurement is column vector
-                    if len(measurement.shape) == 1:
-                        measurement = measurement.reshape(-1, 1)
-                u = K@measurement+Kb
+           
             else:
                 raise ValueError(f"Invalid measurement mode: {self.measurement_mode}")
             # if current_cell == 9:
             #     u[0] = 0
             
             # Normalize and scale
-            speed = 2.5
+            speed = 100
             u_normalized = u / np.linalg.norm(u)
             u_scaled = u_normalized * speed
             # u_scaled = np.array([[0], [0]])
-            # self.get_logger().info(f"Control input: {u_scaled.flatten()}")
+            self.get_logger().info(f"Control input %.3f, %.3f" % (u_scaled.flatten()[0], u_scaled.flatten()[1]))
             # print(f"Control input: {u_scaled.flatten()}")
             
             return u_scaled.reshape(2,1)
@@ -614,304 +586,81 @@ class GazeboNeuralAnalysisNode(Node):
 
 
 
-    def encode_lidar_with_vae(self, lidar_ranges):
-        """
-        Encode lidar scan ranges using the VAE model.
-        
-        Args:
-            lidar_ranges: numpy array of lidar ranges (shape: [640] or [N, 640])
-        
-        Returns:
-            numpy array: Encoded latent representation (shape: [latent_dim] or [N, latent_dim])
-        """
-        if self.VAE is None:
-            raise ValueError("VAE model not loaded. Set lidar_mode=True and ensure model file exists.")
-        
-        if not TORCH_AVAILABLE:
-            raise ImportError("PyTorch is required for VAE encoding")
-        
-        # Convert to numpy array if needed
-        if not isinstance(lidar_ranges, np.ndarray):
-            lidar_ranges = np.array(lidar_ranges)
-        
-        # Handle single sample vs batch
-        single_sample = len(lidar_ranges.shape) == 1
-        if single_sample:
-            lidar_ranges = lidar_ranges.reshape(1, -1)
-        
-        # Convert to numpy array and ensure float32
-        if isinstance(lidar_ranges, torch.Tensor):
-            lidar_ranges = lidar_ranges.cpu().numpy()
-        lidar_ranges = np.array(lidar_ranges, dtype=np.float32)
-        
-        # Normalize data (same normalization as training)
-        # Normalization parameters should be Python scalars (converted in load_vae_model)
-        data_min = float(self.vae_data_min)
-        data_max = float(self.vae_data_max)
-        
-        lidar_normalized = (lidar_ranges - data_min) / (data_max - data_min + 1e-8)
-        
-        # Convert to torch tensor with float32 dtype and move to device
-        
-        lidar_tensor = torch.from_numpy(lidar_normalized).float().to(self.vae_device)
-        
-        # Encode to latent space
-        with torch.no_grad():
-            mu, logvar = self.VAE.encode(lidar_tensor)
-            # Use mean of latent distribution (or use reparameterize for sampling)
-            z = mu  # Or use: z = self.VAE.reparameterize(mu, logvar) for sampling
-        
-        # Convert back to numpy
-        z_numpy = z.cpu().numpy()
-        
-        # Return single sample or batch
-        if single_sample:
-            return z_numpy[0]
-        else:
-            return z_numpy
-    
-    def update_state(self, neural_map, position, orientation, update_hd= True):
-        """
-        Update robot state based on neural map and control input.
-        
-        Args:
-            neural_map: Neural rate output
-            position: Current position
-            orientation: Current orientation
-            update_hd: Whether to update heading direction
-            
-        Returns:
-            New position and heading direction
-        """
-        try:
-            # Get control input
-            u = self.controller(neural_map, position, orientation)
-            self.u_ls.append(u)
-            
-            # Update heading direction
-            if update_hd:
-                new_hd = (np.arctan2(u[1], u[0]) * 180 / np.pi) % 360
-                
-                # Smooth heading update
-                if np.abs(new_hd + 360 - orientation) < np.abs(new_hd - orientation):
-                    new_hd = new_hd + 360
-                
-                eta = 0.2
-                new_hd = ((1 - eta) * orientation + eta * float(new_hd))
-                new_hd = np.sign(new_hd - orientation) * min(np.abs(new_hd - orientation), 18) + orientation
-                new_hd = new_hd % 360
-            else:
-                new_hd = orientation
-            
-            # Update position
-            B_dis = np.eye(2) * self.dt
-            new_position = position + (B_dis @ u).flatten()
-            self.postion_ls.append(new_position.copy())
-            self.hd_ls.append(new_hd)
-        
-           
-            
-            return new_position, new_hd
-            
-        except Exception as e:
-            self.get_logger().error(f"Error updating state: {e}")
-            return position, orientation
-    
-    def publish_robot_pose(self, position, orientation):
-        """Publish robot pose for visualization"""
-        try:
-            msg = JointTrajectory()
-            msg.header = Header()
-            msg.header.frame_id = "footprint_link"
-            msg.joint_names = ["x_pose", "y_pose", "rot_joint"]
 
-            point = JointTrajectoryPoint()
-            # Convert to Python float to ensure ROS2 compatibility
-            x_pos = float(position[0])
-            y_pos = float(position[1])
-            orientation_rad = float(orientation)*np.pi/180
-            point.positions = [x_pos, y_pos, orientation_rad]
-            point.time_from_start.sec = 1  # Change as needed
+    def offest_unicycle_model(self, u):
+        # Map to v, omega
+        # epsilon is the offset of the unicycle model
+        self.epsilon = 0.003
+        # self.epsilon = 0.1
+        J_inv = np.array([
+            [np.cos(self.current_hd), np.sin(self.current_hd)],
+            [-np.sin(self.current_hd)/self.epsilon, np.cos(self.current_hd)/self.epsilon]
+        ])
+        v_omega = np.dot(J_inv, u/900.0)
+        v, omega = v_omega[0], v_omega[1]
+        v = self.clamp(v, -10, 10)
+        omega = self.clamp(omega, -30, 30)
+        self.get_logger().info(f"v: {v}, omega: {omega}")
+        return v, omega
 
-            msg.points = [point]    
-            self.publisher_pose.publish(msg)
-            
-            self.get_logger().debug('Publishing joint trajectory')
-            # time.sleep(0.5)
-            
-        except Exception as e:
-            self.get_logger().error(f"Error publishing pose: {e}")
+    def publish_control(self, v, omega):
+        'publish the control to the unicycle model'
+        twist_msg = Twist()
+        twist_msg.linear.x = float(v)
+        twist_msg.linear.y = 0.0
+        twist_msg.angular.z = float(omega)
+        self._control_pub.publish(twist_msg)
+
 
    
-    
-    def save_json_data(self, neural_rate, position, heading, step_number, timestamp=None):
-        """
-        Save neural rate, heading, and state data as JSON
-        
-        Args:
-            neural_rate: Neural rate output from MATLAB
-            position: Current robot position [x, y]
-            heading: Current heading direction (degrees)
-            # control_input: Control input vector [u_x, u_y]
-            step_number: Current processing step
-            timestamp: Optional timestamp (defaults to current time)
-        """
-        try:
-            if timestamp is None:
-                timestamp = datetime.now().isoformat()
-            
-            # Create data dictionary
-            data_entry = {
-                "timestamp": timestamp,
-                "step_number": int(step_number),
-                "position": {
-                    "x": float(position[0]),
-                    "y": float(position[1])
-                },
-                "heading": float(heading),
-                "neural_rate": neural_rate.flatten().tolist(),
-                # "control_input": {
-                #     "u_x": float(control_input[0]),
-                #     "u_y": float(control_input[1])
-                # },
-                "neural_rate_stats": {
-                    "mean": float(np.mean(neural_rate)),
-                    "std": float(np.std(neural_rate)),
-                    "min": float(np.min(neural_rate)),
-                    "max": float(np.max(neural_rate))
-                }
-            }
-            
-            # Add to list for batch saving
-            self.json_data_list.append(data_entry)
-            
-            # Save individual JSON file for this step
-            individual_filename = os.path.join(self.json_data_dir, f'step_{step_number:03d}.json')
-            # sa
-            with open(individual_filename, 'w') as f:
-                json.dump(data_entry, f, indent=2)
-            
-            self.get_logger().debug(f"JSON data saved for step {step_number}")
-            
-        except Exception as e:
-            self.get_logger().error(f"Error saving JSON data: {e}")
+    def clamp(self, x: float, lo: float, hi: float) -> float:
+        'clamp the value to the range [lo, hi]'
+        return max(lo, min(hi, x))
 
-
-    def save_gen_data(self, neural_rate, position, heading, step_number, timestamp=None, cell_id=None):
-        """
-        Save neural rate, heading, and state data as JSON
-        save image and neural rate
-        """
-        if timestamp is None:
-            timestamp = datetime.now().isoformat()
-            
-        if cell_id is None:
-            cell_id = self.find_cell(position)
-
-        heading_str = f"{heading:g}"
-        neural_dir = os.path.join('cells_kernels', f'c{int(cell_id)}', f'deg{heading_str}')
-        image_dir = os.path.join('cells_kernels_images', f'c{int(cell_id)}', f'deg{heading_str}')
-        neural_rate_path = os.path.join(neural_dir, f'nr_{position[0]:.2f}_y{position[1]:.2f}_HD{heading_str}.json')
-        neural_rate_path_npy = os.path.join(neural_dir, f'nr_{position[0]:.2f}_y{position[1]:.2f}_HD{heading_str}.npy')
-        image_path = os.path.join(image_dir, f'img_{position[0]:.2f}_y{position[1]:.2f}_HD{heading_str}.png')
-          
-        data_entry = {
-            "timestamp": timestamp,
-            "step_number": int(step_number),
-            "cell_id": int(cell_id),
-            "heading": float(heading),
-            "position": {
-                "x": float(position[0]),
-                "y": float(position[1])
-            },
-            "neural_rate": neural_rate.flatten().tolist()
-        }
-        
-        # Add lidar scan data if available
-        if self.current_scan is not None:
-            data_entry["lidar_scan"] = self.current_scan
-        else:
-            self.get_logger().warn(f"No lidar scan data available for step {step_number}")
-            data_entry["lidar_scan"] = None
-        
-        # Create directories if they don't exist
-        os.makedirs(neural_dir, exist_ok=True)
-        os.makedirs(image_dir, exist_ok=True)
-        np.save(neural_rate_path_npy, neural_rate)
-        with open(neural_rate_path, 'w') as f:
-            json.dump(data_entry, f, indent=2)
-        plt.imsave(image_path, self.current_image, cmap='gray')
-
-    def save_batch_json_data(self):
-        """Save all collected JSON data as a single file"""
-        batch_filename = os.path.join(self.json_data_dir, 'all_steps_data.json')
-        with open(batch_filename, 'w') as f:
-            json.dump(self.json_data_list, f, indent=2)
-        
-        self.get_logger().info(f"Batch JSON data saved: {len(self.json_data_list)} entries")
-        
     
     def process_callback(self):
         """Main processing callback"""
         if self.current_step == 0:
-            self.publish_robot_pose(self.current_position, self.current_hd)
+            # self.publish_robot_pose(self.current_position, self.current_hd)
             self.get_logger().info("initializing the robot...")
             self.current_step += 1
 
         elif self.current_step < self.num_steps:
             try:
-                # Check if we have a current image
-                # if not hasattr(self, 'current_image'):
-                #     self.get_logger().warn("No image available for processing")
-                #     return
+              
                 
-                # Generate neural rate from current image
-                neural_rate = self.gen_neural_rate(self.current_image)
-                # neural_rate = np.array([0,0])
+               
+                # neural_rate = self.gen_neural_rate(self.current_image)
+                neural_rate = np.array([0,0])
                 if self.current_step == 0:
                     self.get_logger().info("Starting neural analysis...")
                 
-                # self.get_logger().info(f"Neural Rate: {neural_rate.flatten()[:5]}...")  # Log first 5 values
                 
-                # Update robot state
-                self.current_position, self.current_hd = self.update_state(
-                    neural_rate, self.current_position, self.current_hd
-                )
                 
-                self.get_logger().info(f"Position: {self.current_position}, Heading: {self.current_hd:.1f}°")
+                # self.get_logger().info(f"Position: {self.current_position}, Heading: {self.current_hd:.1f}°")
+                self.current_u = self.controller(neural_rate, self.current_position, self.current_hd)
+                self.current_v, self.current_omega = self.offest_unicycle_model(self.current_u)
+    
+                self.publish_control(self.current_v, self.current_omega)
                 
-                # Get control input for JSON logging (from the last update_state call)
-                current_control_input = self.u_ls[-1] if self.u_ls else np.array([[0.0], [0.0]])
+              
                 
-                # Save JSON data for this step
-                if self.mode == 'gen_data':
-                    self.save_json_data(
-                        neural_rate=neural_rate,
-                        position=self.current_position,
-                        heading=self.current_hd,
-                        # control_input=current_control_input,
-                        step_number=self.current_step
-                    )
-                    
-                    # Store data
-                    self.postion_ls.append(self.current_position.copy())
-                    self.hd_ls.append(self.current_hd)
-                    self.ratemap_ls.append(neural_rate.copy())
-                    self.image_ls.append(self.current_image.copy())
+            
                     
                 # Save data periodically
-                if self.current_step % 10 == 0:
-                    self.save_data()
-                
-                # Publish robot pose
-                self.publish_robot_pose(self.current_position, self.current_hd)
+                self.append_data()
+                self.save_data_json()
+                self.save_data()
+                time.sleep(0.1)
+                # if self.current_step % 10 == 0:
+                #     self.save_data()
                 
                 # Save debug image
-                debug_filename = f'test/img/step_{self.current_step:03d}_pos_{self.current_position[0]:.2f}_{self.current_position[1]:.2f}_hd_{self.current_hd:.1f}.png'
-                plt.imsave(debug_filename, self.current_image, cmap='gray')
-                np.save(f'test/matx/step_{self.current_step:03d}_pos_{self.current_position[0]:.2f}_{self.current_position[1]:.2f}_hd_{self.current_hd:.1f}.npy', self.current_image)
+                # debug_filename = f'test/img/step_{self.current_step:03d}_pos_{self.current_position[0]:.2f}_{self.current_position[1]:.2f}_hd_{self.current_hd:.1f}.png'
+                # plt.imsave(debug_filename, self.current_image, cmap='gray')
+                # np.save(f'test/matx/step_{self.current_step:03d}_pos_{self.current_position[0]:.2f}_{self.current_position[1]:.2f}_hd_{self.current_hd:.1f}.npy', self.current_image)
                 self.current_step += 1
-                self.save_final_data()
+                # self.save_final_data()
                 
             except Exception as e:
                 self.get_logger().error(f"Error in process callback: {e}")
@@ -922,189 +671,61 @@ class GazeboNeuralAnalysisNode(Node):
             self.save_final_data()
             self.cleanup()
 
-    def _all_points(self, cell_id_ls, heading_ls):
-        self.grid_targets = []
-        for cell_id in cell_id_ls:
-            if self.mode == 'vector_feild':
-                num_points = 6
-            else:
-                num_points = 6
-            X, Y = gen_grid_points(cell_id, num_points)
-            for heading in heading_ls:
-                for x, y in zip(X, Y):
-                    self.grid_targets.append(
-                        {
-                            "cell_id": int(cell_id),
-                            "position": np.array([float(x), float(y)]),
-                            "heading": float(heading)
-                        }
-                    )
-        self.num_steps = len(self.grid_targets)
-        self.current_step = 0
-        if self.grid_targets:
-            self.current_position = self.grid_targets[0]["position"].copy()
-            self.current_hd = self.grid_targets[0]["heading"]
-            self.current_cell_id = self.grid_targets[0]["cell_id"]
+
+    def save_data_json(self):
+        """
+        Save neural rate, heading, and state data as JSON
+        save image and neural rate
+        """
+       
+        timestamp = datetime.now().isoformat()
+     
+        heading_str = f"{self.current_hd_degree  :g}"
+       
+        data_entry = {
+            "timestamp": timestamp,
+            "step_number": int(self.current_step),
+            "cell_id": int(self.current_cell),
+            "heading": float(self.current_hd_degree ),
+            "position": {
+                "x": float(self.current_position[0]),
+                "y": float(self.current_position[1])
+            },
+            "control": {
+                "u_x": float(self.current_u[0]),
+                "u_y": float(self.current_u[1]),
+                "v": float(self.current_v),
+                "omega": float(self.current_omega)
+            },
+            # "neural_rate": self.neural_rate.flatten().tolist()
+        }
+        
+        # Add lidar scan data if available
+        if self.current_scan is not None:
+            data_entry["lidar_scan"] = self.current_scan
         else:
-            self.current_position = np.zeros(2)
-            self.current_hd = heading_ls[0] if heading_ls else 0.0
-            self.current_cell_id = cell_id_ls[0] if cell_id_ls else 0
-      
-
-
-    def vector_field_collected_data(self, cell_id, heading):
-        ux = []
-        uy = []
-        X = []
-        Y = []
-        directory_data = os.path.join('cells_kernels', f'c{int(cell_id)}', f'deg{heading}')
-        files = os.listdir(directory_data)
-        for file in files:
-            if file.endswith('.json'):
-                with open(os.path.join(directory_data, file), 'r') as f:
-                    data = json.load(f)
-                    neural_rate = np.array(data["neural_rate"]).reshape(-1,1)
-                    position = np.array([[data["position"]["x"]], [data["position"]["y"]]])
-                    heading = float(data["heading"])
-                u = self.controller(neural_rate, position, heading)
-                ux.append(u[0])
-                uy.append(u[1])
-                X.append(position[0][0])
-                Y.append(position[1][0])
-        ##plot vector field
-        fig, ax = plt.subplots()
-        ax.quiver(X, Y, ux, uy)
-        # plt.show()
-        plt.savefig(f'trj/vector_field_plot_c{cell_id}_deg{heading}.png', dpi=300)
-        plt.close()
-                
-    def vector_field_plot(self):
-        '''plot vector field'''
-        if not self.all_data:
-            self.get_logger().warn("No data available for vector field plot")
-            return
-        with open('trj/vector_field_data.json', 'w') as f:
-            json.dump(self.all_data, f)
-        # Extract positions and control inputs from all_data
-        positions = np.array([entry["position"] for entry in self.all_data])
-        u_vectors = np.array([entry["u"] for entry in self.all_data])
+            self.get_logger().warn(f"No lidar scan data available for step {self.current_step}")
+            data_entry["lidar_scan"] = None
+        pos_x, pos_y = float(self.current_position[0]), float(self.current_position[1])
+        json_path = os.path.join('test/data', f'step_{self.current_step:03d}_pos_{pos_x:.2f}_{pos_y:.2f}_hd_{self.current_hd_degree:g}.json')
+        img_path = os.path.join('test/img', f'step_{self.current_step:03d}_pos_{pos_x:.2f}_{pos_y:.2f}_hd_{self.current_hd_degree:g}.png')
+        # Create directories if they don't exist
         
-        fig, ax = plt.subplots()
-        ax.quiver(positions[:, 0], positions[:, 1], u_vectors[:, 0], u_vectors[:, 1])
-        # plt.show()
-        plt.savefig(f'trj/vector_field_plot_c{self.current_cell_id}_deg{self.current_hd}.png', dpi=300)
-        plt.close()
-        #save data to json
+        with open(json_path, 'w') as f:
+            json.dump(data_entry, f, indent=2)
+        plt.imsave(img_path, self.current_image, cmap='gray')
+
+
+    def append_data(self):
+        """Append data to the lists"""
+        self.v_ls.append(self.current_v)
+        self.omega_ls.append(self.current_omega)
+        self.postion_ls.append(self.current_position.copy())
+        self.hd_ls.append(self.current_hd)
+        self.odom_ls.append(self.current_velocity.copy())
+        self.u_ls.append(self.current_u.copy())
+
         
-
-
-    def gen_data_callback(self):
-        """Generate data callback - ensures pose is updated before capturing image"""
-        if not hasattr(self, 'grid_targets') or not self.grid_targets:
-            self.get_logger().error("No grid targets defined for gen_data mode")
-            self.should_shutdown = True
-            self.cleanup()
-            return
-
-        if self.current_step >= self.num_steps:
-            # Processing complete
-            self.get_logger().info("Neural analysis completed!")
-            if self.mode == 'vector_feild':
-                self.vector_field_plot()
-            self.should_shutdown = True
-            self.cleanup()
-            return
-        
-        try:
-            import time
-            current_target = self.grid_targets[self.current_step]
-            position = current_target["position"]
-            heading = current_target["heading"]
-            cell_id = current_target["cell_id"]
-            
-            # Step 1: Publish pose if not done yet for this step
-            if not self.pose_published:
-                self.current_position = position.copy()
-                self.current_hd = heading
-                self.current_cell_id = cell_id
-                self.publish_robot_pose(self.current_position, self.current_hd)
-                self.pose_published = True
-                self.pose_publish_time = time.time()
-                self.get_logger().info(
-                    f"Step {self.current_step + 1}/{self.num_steps}: Published pose at "
-                    f"({self.current_position[0]:.2f}, {self.current_position[1]:.2f}) "
-                    f"with heading {self.current_hd:.1f}°, waiting for image update..."
-                )
-                return  # Exit and wait for next callback
-            
-            # Step 2: Wait for image to be updated after pose was published
-            # Give some time for Gazebo to update and for image to arrive (at least 2-3 callbacks)
-            if not hasattr(self, 'pose_publish_time'):
-                self.pose_publish_time = time.time()
-            
-            time_since_pose = time.time() - self.pose_publish_time
-            
-            if time_since_pose < 0.2:  # Wait at least 200ms for image to update
-                self.get_logger().debug(f"Waiting for image update... ({time_since_pose:.2f}s elapsed)")
-                return
-            
-            # Step 3: Check if we have a current image
-            # if not hasattr(self, 'current_image'):
-            #     self.get_logger().warn("No image available for processing")
-            #     return
-            
-            # Step 4: Process the image
-            self.get_logger().info(
-                f"Processing image for step {self.current_step + 1} "
-                f"(cell {cell_id}, heading {heading:.1f}°)"
-            )
-            
-            # Generate neural rate from current image
-            # neural_rate = self.gen_neural_rate(self.current_image)
-            neural_rate = np.array([0,0])
-            if self.mode == 'vector_feild':
-                u = self.controller(neural_rate, self.current_position, self.current_hd)
-                self.all_data.append({
-                    "neural_rate": neural_rate.flatten().tolist().copy(),
-                    "u": u.flatten().tolist().copy(),
-                    "position": self.current_position.tolist().copy(),
-                    "heading": self.current_hd,
-                    "lidar_data": self.current_scan
-                })
-                
-                
-            
-            # self.get_logger().info(f"Neural Rate: {neural_rate.flatten()[:5]}...")  # Log first 5 values
-            
-            # Update robot state
-            self.current_position = position.copy()
-            self.current_hd = heading
-            
-            self.get_logger().info(
-                f"Position: {self.current_position}, Heading: {self.current_hd:.1f}°"
-            )
-            
-            # Save the data
-            if self.mode == 'gen_data':
-                self.save_gen_data(
-                    neural_rate,
-                    self.current_position,
-                    self.current_hd,
-                    self.current_step,
-                    cell_id=cell_id
-                )
-                
-            # Move to next step and reset state
-            self.current_step += 1
-            self.pose_published = False  # Reset for next step
-            
-            self.get_logger().info(f"Step {self.current_step-1} completed successfully")
-            
-        except Exception as e:
-            self.get_logger().error(f"Error in gen_data callback: {e}")
-            # Reset state to try again
-            self.pose_published = False
-    
     def save_data(self):
         """Save intermediate data"""
         try:
@@ -1113,7 +734,9 @@ class GazeboNeuralAnalysisNode(Node):
             np.save('trj/u_ls.npy', self.u_ls)
             np.save('trj/image_ls.npy', self.image_ls)
             np.save('trj/ratemap_ls.npy', self.ratemap_ls)
-            
+            np.save('trj/odom_ls.npy', self.odom_ls)
+            np.save('trj/v_ls.npy', np.asarray(self.v_ls, dtype=float))
+            np.save('trj/omega_ls.npy', np.asarray(self.omega_ls, dtype=float))
             self.get_logger().debug("Intermediate data saved")
             
         except Exception as e:
@@ -1142,38 +765,7 @@ class GazeboNeuralAnalysisNode(Node):
         except Exception as e:
             self.get_logger().error(f"Error saving final data: {e}")
     
-    def create_trajectory_plot(self):
-        """Create trajectory visualization plot"""
-        try:
-            fig, ax = plt.subplots(figsize=(12, 8))
-            
-            # Plot trajectory
-            ax.plot(self.postion_ls[:, 0], self.postion_ls[:, 1], 'b-', linewidth=2, label='Trajectory')
-            ax.scatter(self.postion_ls[0, 0], self.postion_ls[0, 1], color='green', s=100, label='Start')
-            ax.scatter(self.postion_ls[-1, 0], self.postion_ls[-1, 1], color='red', s=100, label='End')
-            
-            # Plot control vectors
-            for i in range(0, len(self.u_ls), 5):  # Every 5th vector
-                ax.quiver(self.postion_ls[i, 0], self.postion_ls[i, 1], 
-                         self.u_ls[i, 0], self.u_ls[i, 1], 
-                         scale=10, alpha=0.7, color='orange')
-            
-            ax.set_xlabel('X Position')
-            ax.set_ylabel('Y Position')
-            ax.set_title('Robot Trajectory with Control Vectors')
-            ax.legend()
-            ax.grid(True)
-            ax.axis('equal')
-            
-            plt.tight_layout()
-            plt.savefig('trj/trajectory_plot.png', dpi=300, bbox_inches='tight')
-            plt.close()
-            
-            self.get_logger().info("Trajectory plot saved")
-            
-        except Exception as e:
-            self.get_logger().error(f"Error creating trajectory plot: {e}")
-    
+  
     def cleanup(self):
         """Cleanup resources"""
         try:

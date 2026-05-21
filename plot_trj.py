@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 from gen_controller import cell, cell_ls, cell_ls_vis
@@ -82,6 +83,8 @@ def visualization(bars):
                 ax.plot([cell.vrt[i][0], cell.vrt[i+1][0]], [cell.vrt[i][1], cell.vrt[i+1][1]], color = 'gray')
 
             ax.plot([cell.vrt[0][0], cell.vrt[-1][0]], [cell.vrt[0][1], cell.vrt[-1][1]], color = 'gray')
+            cx, cy = np.mean(cell.vrt, axis=0)
+            ax.text(cx, cy, str(num_cell), ha='center', va='center', fontsize=7, color='black')
        
         for env_vrt in bars:
             for i in range(len(env_vrt)-1):
@@ -213,11 +216,74 @@ def gif_maker(bars):
             print(i_step)
             plt.close()
 
+def _load_trj_array(path, allow_pickle=False):
+    if not os.path.isfile(path) or os.path.getsize(path) == 0:
+        return None
+    try:
+        return np.load(path, allow_pickle=allow_pickle)
+    except (EOFError, ValueError, OSError):
+        return None
+
+
+def u_to_v_omega(u, hd, epsilon=0.1):
+    """Same mapping as control_node_unicycle.offest_unicycle_model."""
+    u = np.asarray(u).reshape(2)
+    j_inv = np.array([
+        [np.cos(hd), np.sin(hd)],
+        [-np.sin(hd) / epsilon, np.cos(hd) / epsilon],
+    ])
+    v_omega = j_inv @ (u / 10.0)
+    return np.clip(v_omega[0], -1, 1), np.clip(v_omega[1], -3, 3)
+
+
+def v_omega_from_u_ls(u_ls, hd_ls, epsilon=0.1):
+    hd_ls = np.asarray(hd_ls).reshape(-1)
+    n = len(hd_ls)
+    v_ls = np.zeros(n)
+    omega_ls = np.zeros(n)
+    for i in range(n):
+        v_ls[i], omega_ls[i] = u_to_v_omega(u_ls[i], hd_ls[i], epsilon)
+    return v_ls, omega_ls
+
+
+def plot_data():
+    postion_ls = np.load('trj/postion_ls.npy')
+    hd_ls = np.load('trj/hd_ls.npy')
+    odom_ls = np.squeeze(np.load('trj/odom_ls.npy'))
+    u_ls = np.load('trj/u_ls.npy')
+    v_ls = _load_trj_array('trj/v_ls.npy')
+    omega_ls = _load_trj_array('trj/omega_ls.npy')
+    if v_ls is None or omega_ls is None:
+        print('trj/v_ls.npy or trj/omega_ls.npy missing or empty; deriving from u_ls and hd_ls')
+        v_ls, omega_ls = v_omega_from_u_ls(u_ls, hd_ls)
+    else:
+        v_ls = np.asarray(v_ls).reshape(-1)
+        omega_ls = np.asarray(omega_ls).reshape(-1)
+    vx = v_ls * np.cos(hd_ls[1:])
+    vy = v_ls * np.sin(hd_ls[1:])
+    fig, ax = plt.subplots(3)
+    ax[0].plot(vx, label ='cmd')
+    ax[0].plot(odom_ls[:, 0], label ='odom')
+    ax[0].legend()
+    ax[1].plot(vy, label ='cmd')
+    ax[1].plot(odom_ls[:, 1], label ='odom')
+    ax[1].legend()
+    ax[2].plot(omega_ls, label ='cmd')
+    ax[2].plot(odom_ls[:, 2], label ='odom')
+    ax[2].legend()
+    os.makedirs('trj/data', exist_ok=True)
+    plt.tight_layout()
+    plt.savefig('trj/data/plot_odom.png', dpi= 200)
+    plt.show()
     
+   
+    # for i in range(len(postion_ls)):
+    #     plt.figure()
 
 
 bars = [[[0, 1.2],[0, 0], [1.2, 0], [1.2 ,0.6], [0.6, 0.6], [0.6, 1.2]] ]
 
 
 visualization(bars)
+# plot_data()
 # gif_maker(bars)       

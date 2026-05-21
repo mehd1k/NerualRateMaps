@@ -731,7 +731,12 @@ def visualize_rsc_response(cell_index, figsize = (12, 10)):
 
 if __name__ == '__main__':
     # Example usage
-    json_file = 'cells_kernels/c4/deg90/nr_0.01_y0.46_HD90.json'
+    json_file = 'test/data/step_001_pos_0.25_0.94_hd_269.914.json'
+    # json_file = 'cells_kernels/c4/deg90/nr_0.01_y0.46_HD90.json'
+    visualize_lidar_scan(json_file)
+    plt.show()
+    # plt.savefig('lidar_scan_cartesian.png', dpi=300, bbox_inches='tight')
+    
     
     # # Create cartesian visualization
     # print(f"Visualizing lidar scan from {json_file}")
@@ -751,12 +756,12 @@ if __name__ == '__main__':
 
 
     # Generate the polar grid
-    occupancy_grid_polar, polar_params = generate_occupancy_grid_polar(json_file)
+    # occupancy_grid_polar, polar_params = generate_occupancy_grid_polar(json_file)
 
     ##Visualize as polar plot (default)
-    fig, ax = visualize_occupancy_grid_polar(occupancy_grid_polar, polar_params)
+    # fig, ax = visualize_occupancy_grid_polar(occupancy_grid_polar, polar_params)
     # plt.show()
-    plt.savefig('polar_occupancy_grid.png', dpi=300, bbox_inches='tight')
+    # plt.savefig('polar_occupancy_grid.png', dpi=300, bbox_inches='tight')
 
     # fig, ax = visualize_rsc_response(7)
     # plt.show()

@@ -236,8 +236,8 @@ class GazeboNeuralAnalysisNode(Node):
 
 
 
-        self.current_position = np.array([1.0, 0.2])  # Initial position
-        self.current_hd = 90  #Initial heading direction
+        self.current_position = np.array([0.25, 1.0])  # Initial position
+        self.current_hd = -90  #Initial heading direction
 
         self.current_step = 0
         self.num_steps = 300
@@ -866,8 +866,8 @@ class GazeboNeuralAnalysisNode(Node):
                 #     return
                 
                 # Generate neural rate from current image
-                neural_rate = self.gen_neural_rate(self.current_image)
-                # neural_rate = np.array([0,0])
+                # neural_rate = self.gen_neural_rate(self.current_image)
+                neural_rate = np.array([0,0])
                 if self.current_step == 0:
                     self.get_logger().info("Starting neural analysis...")
                 
