@@ -13,7 +13,7 @@ class LaserScanBuffer(Node):
     def __init__(self) -> None:
         super().__init__("plot_lidar_scan_live")
 
-        self.declare_parameter("topic", "/demo/scan")
+        self.declare_parameter("topic", "/scan")
         self.declare_parameter("point_size", 3.0)
 
         topic = self.get_parameter("topic").get_parameter_value().string_value

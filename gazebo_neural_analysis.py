@@ -214,7 +214,7 @@ class GazeboNeuralAnalysisNode(Node):
         self.sc_img = 1
         self.cam_far = int(3000/self.sc_img)
         # measurement mode = ['neural_rate', 'neural_lidar', 'vae']
-        self.measurement_mode = 'neural_lidar'
+        self.measurement_mode = 'neural_rate'
         # Initialize control system components
         self.cell_ls = cell_ls
         self.control_gain_load = control_gain_load(self.measurement_mode)
@@ -236,8 +236,16 @@ class GazeboNeuralAnalysisNode(Node):
 
 
 
-        self.current_position = np.array([0.25, 1.0])  # Initial position
-        self.current_hd = -90  #Initial heading direction
+        # self.current_position = np.array([0.25, 1.0])  # Initial position
+        # self.current_hd = 270  #Initial heading direction
+
+        ###lidar neural worked
+        # self.current_position = np.array([0.25, 0.33])  # Initial position
+        # self.current_hd = 278 #Initial heading direction
+
+
+        self.current_position = np.array([0.22, 0.22])  # Initial position
+        self.current_hd = 0 #Initial heading direction
 
         self.current_step = 0
         self.num_steps = 300
@@ -252,6 +260,8 @@ class GazeboNeuralAnalysisNode(Node):
         self.hd_ls = []
         self.ratemap_ls = []
         self.u_ls = []
+        self.v_ls = []
+        self.omega_ls = []
         
         # State tracking for gen_data mode
         self.pose_published = False  # Track if we've published pose for current step
@@ -669,6 +679,26 @@ class GazeboNeuralAnalysisNode(Node):
             return z_numpy[0]
         else:
             return z_numpy
+
+    def offest_unicycle_model(self, u, orientation):
+        # Map to v, omega
+        # epsilon is the offset of the unicycle model
+        self.epsilon = 0.1
+        # self.epsilon = 0.1
+        J_inv = np.array([
+            [np.cos(orientation), np.sin(orientation)],
+            [-np.sin(orientation)/self.epsilon, np.cos(orientation)/self.epsilon]
+        ])
+        v_omega = np.dot(J_inv, u)
+        v, omega = v_omega[0], v_omega[1]
+        v = self.clamp(v, -10, 10)
+        omega = self.clamp(omega, -30, 30)
+        self.get_logger().info(f"v: {v}, omega: {omega}")
+        return v, omega
+
+    def clamp(self, x: float, lo: float, hi: float) -> float:
+        'clamp the value to the range [lo, hi]'
+        return max(lo, min(hi, x))
     
     def update_state(self, neural_map, position, orientation, update_hd= True):
         """
@@ -686,32 +716,43 @@ class GazeboNeuralAnalysisNode(Node):
         try:
             # Get control input
             u = self.controller(neural_map, position, orientation)
+            self.get_logger().info(f"Control input: {u.flatten()}")
+            ### Unicycle dynamics with offset model
+            v, omega = self.offest_unicycle_model(u, orientation*np.pi/180)
+            new_position = position + v*self.dt*np.array([np.cos(orientation*np.pi/180), np.sin(orientation*np.pi/180)])
+            new_hd = orientation + omega*self.dt*180/np.pi
+            new_hd = float(new_hd)
+            new_hd = new_hd % 360
             self.u_ls.append(u)
+            self.v_ls.append(v)
+            self.omega_ls.append(omega)
+
             
-            # Update heading direction
-            if update_hd:
-                new_hd = (np.arctan2(u[1], u[0]) * 180 / np.pi) % 360
-                
-                # Smooth heading update
-                if np.abs(new_hd + 360 - orientation) < np.abs(new_hd - orientation):
-                    new_hd = new_hd + 360
-                
-                eta = 0.2
-                new_hd = ((1 - eta) * orientation + eta * float(new_hd))
-                new_hd = np.sign(new_hd - orientation) * min(np.abs(new_hd - orientation), 18) + orientation
-                new_hd = new_hd % 360
-            else:
-                new_hd = orientation
             
-            # Update position
-            B_dis = np.eye(2) * self.dt
-            new_position = position + (B_dis @ u).flatten()
+            # # Update heading direction
+            # if update_hd:
+            #     new_hd = (np.arctan2(u[1], u[0]) * 180 / np.pi) % 360
+                
+            #     # Smooth heading update
+            #     if np.abs(new_hd + 360 - orientation) < np.abs(new_hd - orientation):
+            #         new_hd = new_hd + 360
+                
+            #     eta = 0.2
+            #     new_hd = ((1 - eta) * orientation + eta * float(new_hd))
+            #     new_hd = np.sign(new_hd - orientation) * min(np.abs(new_hd - orientation), 18) + orientation
+            #     new_hd = new_hd % 360
+            # else:
+            #     new_hd = orientation
+            
+            # # Update position
+            # B_dis = np.eye(2) * self.dt
+            # new_position = position + (B_dis @ u).flatten()
             self.postion_ls.append(new_position.copy())
             self.hd_ls.append(new_hd)
         
            
             
-            return new_position, new_hd
+            return new_position, float(new_hd)
             
         except Exception as e:
             self.get_logger().error(f"Error updating state: {e}")
@@ -866,8 +907,12 @@ class GazeboNeuralAnalysisNode(Node):
                 #     return
                 
                 # Generate neural rate from current image
-                # neural_rate = self.gen_neural_rate(self.current_image)
-                neural_rate = np.array([0,0])
+                if self.measurement_mode == 'neural_rate':
+                    neural_rate = self.gen_neural_rate(self.current_image)
+                else: 
+                    neural_rate = np.array([0,0])
+                
+                
                 if self.current_step == 0:
                     self.get_logger().info("Starting neural analysis...")
                 
@@ -1060,8 +1105,13 @@ class GazeboNeuralAnalysisNode(Node):
             )
             
             # Generate neural rate from current image
+            if self.measurement_mode == 'neural_rate':
+                neural_rate = self.gen_neural_rate(self.current_image)
+            else:
+                neural_rate = np.array([0,0])
+            
             # neural_rate = self.gen_neural_rate(self.current_image)
-            neural_rate = np.array([0,0])
+            # neural_rate = np.array([0,0])
             if self.mode == 'vector_feild':
                 u = self.controller(neural_rate, self.current_position, self.current_hd)
                 self.all_data.append({
@@ -1209,7 +1259,7 @@ def main(args=None):
         type=int,
         nargs='+',
         # default=list(range(0,48)),
-        default=[18],
+        default=[14],
         help="Cell IDs to include when generating data"
     )
     parser.add_argument(
@@ -1217,7 +1267,7 @@ def main(args=None):
         type=float,
         nargs='+',
         # default=list(range(0, 360, 10)),
-        default=[90],
+        default=[270],
         help="Heading angles (degrees) to iterate when generating data"
     )
     parsed_args, remaining = parser.parse_known_args(args=args)

@@ -590,7 +590,7 @@ class GazeboNeuralAnalysisNode(Node):
     def offest_unicycle_model(self, u):
         # Map to v, omega
         # epsilon is the offset of the unicycle model
-        self.epsilon = 0.003
+        self.epsilon = 0.01
         # self.epsilon = 0.1
         J_inv = np.array([
             [np.cos(self.current_hd), np.sin(self.current_hd)],

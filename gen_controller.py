@@ -958,7 +958,7 @@ class Control_cal():
         m = gp.Model()
         # ###Defining the Optimization problem
 
-        control_lim = 10**-3
+        control_lim = 10**-5
        
         
 
@@ -1286,14 +1286,14 @@ def gen_controller_all_orinetation(cell_i, directory_mat, directory_save, ch , c
     # # plt.imshow(np.sum(rate_maps_cell, axis= 0))
     # # plt.colorbar()
     # # plt.show()
-    for deg in range(0, 360, 10):
+    for deg in range(270, 280, 10):
             # A = np.zeros((2,2))
         A = np.zeros((2,2))
         # A = np.ones((2,2))*0.1
         B = np.eye((2))
         print('*************************deg=',deg,'*************************')
-        s0=Control_cal(cell_i,A, B,dt,ch=ch,cv=cv ,sigma_max= sigma_max,eps=eps , grid_size_x=10,
-                        grid_size_y=10, directory_mat =directory_mat+str(deg) , directory_save = directory_save+str(deg), measurement_mode = measurement_mode )
+        s0=Control_cal(cell_i,A, B,dt,ch=ch,cv=cv ,sigma_max= sigma_max,eps=eps , grid_size_x=6,
+                        grid_size_y=6, directory_mat =directory_mat+str(deg) , directory_save = directory_save+str(deg), measurement_mode = measurement_mode )
         # print('***************************************cell=',i_cell )
         # print(cv_ls[i_cell], ch_ls[i_cell], sigma_max_ls[i_cell], eps_ls[i_cell])
         # s0.plot_cell()
@@ -1312,8 +1312,8 @@ def gen_controller_all_orinetation(cell_i, directory_mat, directory_save, ch , c
 
 
 
-delta_x = 0.00
-# delta_x = 1.2*10**-3
+# delta_x = 0.00
+delta_x = 1.2*10**-3
 
 
 
@@ -1775,8 +1775,8 @@ if __name__ == '__main__':
     
     A = np.zeros((2,2))
     B = np.eye((2))
-    measurement_mode = 'neural_lidar'
-    i_cell = 22
+    measurement_mode = 'neural_rate'
+    i_cell = 14
     directory_mat = 'cells_kernels/c'+str(i_cell)+'/deg'
     # directory_save =  'cells_controllers/c'+str(i_cell)+'/deg'
     if measurement_mode == 'vae':
@@ -1792,7 +1792,7 @@ if __name__ == '__main__':
     ### gen_controller_all_orinetation(cell_ls[i_cell], directory_mat, directory_save, ch =0.4*10**-2, cv=7*10**-3, eps = 12*10**-3, sigma_max = 10**-6, dt = 0.001 )
     ### gen_controller_all_orinetation(cell_ls[i_cell], directory_mat, directory_save, ch =0.5*10**-2, cv=10*10**-4, eps = 1*10**-2, sigma_max = 10**-6, dt = 0.001 )
     ### gen_controller_all_orinetation(cell_ls[i_cell], directory_mat, directory_save, ch =3.0*10**-3, cv=10**-3, eps = 10**-2, sigma_max = 10**-6, dt = 0.001 )
-    gen_controller_all_orinetation(cell_ls[i_cell], directory_mat, directory_save, ch =10*10**-4, cv=10*10**-4, eps = 10**-2, sigma_max = 10**-6, dt = 0.001, measurement_mode = measurement_mode )
+    gen_controller_all_orinetation(cell_ls[i_cell], directory_mat, directory_save, ch =4*10**-4, cv=10*10**-4, eps = 10**-2, sigma_max = 10**-6, dt = 0.001, measurement_mode = measurement_mode )
     
     ###
     ##neural_lidar mode
