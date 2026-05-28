@@ -332,6 +332,7 @@ class GazeboNeuralAnalysisNode(Node):
             self.timer = self.create_timer(self.timer_period, self.process_callback)
         elif mode == 'gen_data' or mode == 'vector_feild':
             self._all_points(self.cell_id_list, self.heading_list)
+            # print('all_points', self.grid_targets)
             self.timer = self.create_timer(self.timer_period, self.gen_data_callback)
             if mode == 'vector_feild':
                 self.all_data = []
@@ -609,14 +610,18 @@ class GazeboNeuralAnalysisNode(Node):
             #     u[0] = 0
             
             # Normalize and scale
-            speed = 2.5
+            # speed = 2.5
+            speed = 1.0
             u_normalized = u / np.linalg.norm(u)
             u_scaled = u_normalized * speed
             # u_scaled = np.array([[0], [0]])
-            # self.get_logger().info(f"Control input: {u_scaled.flatten()}")
-            # print(f"Control input: {u_scaled.flatten()}")
+            self.get_logger().info(f"Control input: {u_scaled.flatten()}")
+            print(f"Control input: {u_scaled.flatten()}")
             
+            
+            # u_scaled = u
             return u_scaled.reshape(2,1)
+            
             
         except Exception as e:
             self.get_logger().error(f"Error in controller: {e}")
@@ -973,7 +978,7 @@ class GazeboNeuralAnalysisNode(Node):
             if self.mode == 'vector_feild':
                 num_points = 6
             else:
-                num_points = 6
+                num_points = 4
             X, Y = gen_grid_points(cell_id, num_points)
             for heading in heading_ls:
                 for x, y in zip(X, Y):
@@ -1251,7 +1256,7 @@ def main(args=None):
     parser.add_argument(
         '--mode',
         choices=['controller', 'gen_data', 'vector_feild'],
-        default='controller',
+        default='vector_feild',
         help="Operating mode for the node"
     )
     parser.add_argument(
@@ -1259,14 +1264,14 @@ def main(args=None):
         type=int,
         nargs='+',
         # default=list(range(0,48)),
-        default=[14],
+        default=[9],
         help="Cell IDs to include when generating data"
     )
     parser.add_argument(
         '--headings',
         type=float,
         nargs='+',
-        # default=list(range(0, 360, 10)),
+        # default=list(range(0, 260, 10)),
         default=[270],
         help="Heading angles (degrees) to iterate when generating data"
     )

@@ -3,6 +3,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import math
+import json
 # from shapely.geometry import Point, Polygon
 from scipy.spatial import Delaunay
 # import cvxpy as cp
@@ -423,9 +424,23 @@ class Control_cal():
 
         self.kernel = self.load_mat_files2(directory_mat)
         self.kernel_ls = [self.kernel]
+        
       
         # self.kernel_ls =  [np.log(np.abs(self.kernel)+1)/np.max(np.abs(self.kernel)), np.sin(self.kernel)]
 
+    def gain_bounds(self):
+        n_samples = self.kernel.shape[1]
+        n_y = self.kernel.shape[0]
+        gain_bounds = np.zeros((n_y, 2))
+        mean_activation = np.mean(np.abs(self.kernel), axis=1)
+        alpha = 0.01
+        gain_bounds = alpha*mean_activation
+        min_bounds = -np.array([gain_bounds.flatten(), gain_bounds.flatten()])
+        max_bounds = np.array([gain_bounds.flatten(), gain_bounds.flatten()])
+        return min_bounds, max_bounds
+    
+        
+        return gain_bounds
     
     def load_mat_files2(self, directory):
             if directory == None:
@@ -736,7 +751,7 @@ class Control_cal():
     
    
     def vector_F(self):
-
+        self.all_data = []
         obs = observation(self.l, self.eps, self.sigma_max, self.gs, self.d)
         # obs = obs = observation(self.l, self.eps, self.sigma_max, [10,10], self.d)
         CD = Discrertized_Linear_Controller(self.A, self.B, self.dt)
@@ -762,6 +777,13 @@ class Control_cal():
                 # Po = obs.obs(x_old).T.flatten().reshape([-1,1])
                 u =self.u(Po)
                 uc = np.copy(u)/np.linalg.norm(u)
+                
+                self.all_data.append({
+                    "neural_rate": list(self.kernel_ls[0]@Po.flatten().copy()),
+                    "u": list(uc.flatten().copy()),
+                    "position": [x, y].copy()
+
+                })
             
                 
                 ux_ls.append(uc[0]) 
@@ -769,7 +791,9 @@ class Control_cal():
                 xg.append(x)
                 yg.append(y)
             
-        fig, ax = plt.subplots()        
+        fig, ax = plt.subplots()
+        with open('trj/vector_field_data_synthesized.json', 'w') as f:
+            json.dump(self.all_data, f)
         for i in range(len(self.vrt)-1):
             ax.plot([self.vrt[i,0], self.vrt[i+1,0]], [self.vrt[i,1], self.vrt[i+1,1]], color = 'black')
         
@@ -935,7 +959,7 @@ class Control_cal():
         
 
       
-    def get_K(self,cbf_lb= 0, clf_lb = 0): 
+    def get_K(self,cbf_lb= 0, clf_lb = 0, constant_gain_bounds = False): 
         print('wh', )
         wh = 155
         wv =1.21
@@ -958,7 +982,7 @@ class Control_cal():
         m = gp.Model()
         # ###Defining the Optimization problem
 
-        control_lim = 10**-5
+        control_lim = 10**-3
        
         
 
@@ -969,7 +993,12 @@ class Control_cal():
         n_kernels = len(self.kernel_ls)
         # K = m.addMVar((2,nk), ub = control_lim, lb = -control_lim, name = 'K')
         nk = len(self.kernel_ls[0])
-        K = m.addMVar((n_kernels,2,nk), ub = control_lim, lb = -control_lim, name = 'K')
+        
+        if constant_gain_bounds:
+            K = m.addMVar((n_kernels,2,nk), ub = control_lim, lb = -control_lim, name = 'K')
+        else:
+            self.min_bounds, self.max_bounds = self.gain_bounds()
+            K = m.addMVar((n_kernels,2,nk), ub = self.max_bounds, lb = self.min_bounds, name = 'K')
 
         control_lim_b = 5
         Kb = m.addMVar((2,1), ub = control_lim_b, lb = -control_lim_b, name = 'Kb')
@@ -1292,8 +1321,8 @@ def gen_controller_all_orinetation(cell_i, directory_mat, directory_save, ch , c
         # A = np.ones((2,2))*0.1
         B = np.eye((2))
         print('*************************deg=',deg,'*************************')
-        s0=Control_cal(cell_i,A, B,dt,ch=ch,cv=cv ,sigma_max= sigma_max,eps=eps , grid_size_x=6,
-                        grid_size_y=6, directory_mat =directory_mat+str(deg) , directory_save = directory_save+str(deg), measurement_mode = measurement_mode )
+        s0=Control_cal(cell_i,A, B,dt,ch=ch,cv=cv ,sigma_max= sigma_max,eps=eps , grid_size_x=4,
+                        grid_size_y=4, directory_mat =directory_mat+str(deg) , directory_save = directory_save+str(deg), measurement_mode = measurement_mode )
         # print('***************************************cell=',i_cell )
         # print(cv_ls[i_cell], ch_ls[i_cell], sigma_max_ls[i_cell], eps_ls[i_cell])
         # s0.plot_cell()
@@ -1776,7 +1805,7 @@ if __name__ == '__main__':
     A = np.zeros((2,2))
     B = np.eye((2))
     measurement_mode = 'neural_rate'
-    i_cell = 14
+    i_cell = 9
     directory_mat = 'cells_kernels/c'+str(i_cell)+'/deg'
     # directory_save =  'cells_controllers/c'+str(i_cell)+'/deg'
     if measurement_mode == 'vae':
